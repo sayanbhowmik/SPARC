@@ -217,6 +217,20 @@ EIGEN_FILE_NO_EIGENVALUES_AND_OCCUPATIONS_FOUND_ERROR = \
 ORBITAL_FNAME_NOT_STRING_ERROR = \
     "The psi filename must be a string, get {} instead"
 
+# Spin check errors
+PSI_NSPIN_NOT_SUPPORTED_ERROR = \
+    "Only spin-unpolarized (nspin=1) and collinear spin (nspin=2) .psi files are supported, got nspin={}"
+SPIN_TYP_NOT_SUPPORTED_ERROR = \
+    "PDOS currently supports only spin-unpolarized (SPIN_TYP=0) and collinear spin-polarized (SPIN_TYP=1) calculations, got SPIN_TYP={}"
+ACTIVATE_SPIN_REQUIRES_SPIN_POLARIZED_ERROR = \
+    "_activate_spin is only used for spin-polarized calculations"
+ACTIVATE_SPIN_EIGEN_NOT_LOADED_ERROR = \
+    "eign_by_spin / occ_by_spin / I_indices_by_spin must be loaded before calling _activate_spin"
+SPIN_INDEX_OUT_OF_RANGE_ERROR = \
+    "spin_index = {} out of range for nspin = {}"
+NSPIN_NOT_EQUAL_TO_PSI_HEADER_ERROR = \
+    "nspin = {} != header['nspin'] = {}"
+
 # Atom orbitals check errors
 INVALID_ATOM_INPUT_ERROR = \
     "parameter atom_type_index must be an integer, get {} instead"
@@ -441,13 +455,13 @@ def read_psi(filename, endian="<", verbose=True):
     Returns
     -------
     psi : np.ndarray
-        array of shape (Nd * Nspinor_eig, nband, nkpt),
-        it is arranged as (spinor-blocked, band, kpt)
+        spin-unpolarized (nspin=1): shape (Nd * Nspinor_eig, nband, nkpt)
+        collinear spin (nspin=2): shape (Nd * Nspinor_eig, nband, nkpt, nspin)
+        SPARC write order is kpt -> band -> spin.
     header : dict
         header information (Nx, Ny, Nz, Nd, dx, dy, dz, dV, Nspinor_eig, isGamma, nspin, nkpt, nband)
     per_band_meta : list[dict]
-        metadata for each (kpt, band): spin_index, kpt_index, kpt_vec(3,), band_indx
-        the index order is outer loop of kpt, inner loop of band
+        metadata for each record: spin_index, kpt_index, kpt_vec(3,), band_indx
     """
     def _read(f, dtype, count=1):
         # read count elements from the file, return a numpy array
@@ -476,6 +490,7 @@ def read_psi(filename, endian="<", verbose=True):
         nband       = int(_read(f, np.int32)[0])
 
         assert Nd == Nx * Ny * Nz, "Nd != Nx*Ny*Nz"
+        assert nspin in (1, 2), PSI_NSPIN_NOT_SUPPORTED_ERROR.format(nspin)
 
         if verbose:
             print(f" Nx {Nx}, Ny {Ny}, Nz {Nz}\n"
@@ -483,44 +498,53 @@ def read_psi(filename, endian="<", verbose=True):
                   f" dV {dV}, isgamma {isGamma}, Nspinor_eig {Nspinor_eig}\n"
                   f" nspin {nspin}, nkpt {nkpt}, nband {nband}")
 
-        psi = np.zeros((Nd * Nspinor_eig, nband, nkpt), dtype=np.complex128 if not isGamma else np.float64)
+        dtype = np.complex128 if not isGamma else np.float64
+        if nspin == 1:
+            psi = np.zeros((Nd * Nspinor_eig, nband, nkpt), dtype=dtype)
+        else:
+            psi = np.zeros((Nd * Nspinor_eig, nband, nkpt, nspin), dtype=dtype)
         per_band_meta = []
 
+        # SPARC printing.c write order: for kpt, for band, for spin
         for kpt in range(nkpt):
             for band in range(nband):
-                spin_index = int(_read(f, np.int32)[0])
-                kpt_index  = int(_read(f, np.int32)[0])
-                kpt_vec    = _read(f, np.float64, 3).astype(float)
-                band_indx  = int(_read(f, np.int32)[0])
+                for _ispin in range(nspin):
+                    spin_index = int(_read(f, np.int32)[0])
+                    kpt_index  = int(_read(f, np.int32)[0])
+                    kpt_vec    = _read(f, np.float64, 3).astype(float)
+                    band_indx  = int(_read(f, np.int32)[0])
 
-                if verbose:
-                    print(f"extracting spin_indx {spin_index}, kpt_indx {kpt_index}, "
-                          f"kpt_vec {kpt_vec[0]:.6f} {kpt_vec[1]:.6f} {kpt_vec[2]:.6f},band_indx {band_indx}")
+                    if verbose:
+                        print(f"extracting spin_indx {spin_index}, kpt_indx {kpt_index}, "
+                              f"kpt_vec {kpt_vec[0]:.6f} {kpt_vec[1]:.6f} {kpt_vec[2]:.6f},band_indx {band_indx}")
 
-                per_band_meta.append({
-                    "spin_index": spin_index,
-                    "kpt_index": kpt_index,
-                    "kpt_vec": kpt_vec,
-                    "band_indx": band_indx,
-                })
+                    per_band_meta.append({
+                        "spin_index": spin_index,
+                        "kpt_index": kpt_index,
+                        "kpt_vec": kpt_vec,
+                        "band_indx": band_indx,
+                    })
 
-                # fill psi
-                for spinor in range(Nspinor_eig):
-                    start = spinor * Nd
-                    end   = (spinor + 1) * Nd
+                    # fill psi
+                    for spinor in range(Nspinor_eig):
+                        start = spinor * Nd
+                        end   = (spinor + 1) * Nd
 
-                    if isGamma:
-                        # real number: fread([1 Nd],'double')' -> column vector in MATLAB
-                        arr = _read(f, np.float64, Nd)
-                        # directly put the column vector into psi
-                        psi[start:end, band, kpt] = arr
-                    else:
-                        # complex number: fread([2 Nd],'double') -> 2×Nd(column-major) in MATLAB, then complex(row1, row2).'
-                        raw = _read(f, np.float64, 2 * Nd)
-                        # restore to (2, Nd) column-major shape (simulate MATLAB column-major)
-                        raw = np.reshape(raw, (2, Nd), order='F')
-                        arr = raw[0, :] + 1j * raw[1, :]
-                        psi[start:end, band, kpt] = arr
+                        if isGamma:
+                            # real number: fread([1 Nd],'double')' -> column vector in MATLAB
+                            arr = _read(f, np.float64, Nd)
+                            # directly put the column vector into psi
+                        else:
+                            # complex number: fread([2 Nd],'double') -> 2×Nd(column-major) in MATLAB, then complex(row1, row2).'
+                            raw = _read(f, np.float64, 2 * Nd)
+                            # restore to (2, Nd) column-major shape (simulate MATLAB column-major)
+                            raw = np.reshape(raw, (2, Nd), order='F')
+                            arr = raw[0, :] + 1j * raw[1, :]
+
+                        if nspin == 1:
+                            psi[start:end, band, kpt] = arr
+                        else:
+                            psi[start:end, band, kpt, spin_index] = arr
 
     header = dict(
         Nx=Nx, Ny=Ny, Nz=Nz, Nd=Nd,
@@ -965,7 +989,7 @@ def get_default_generator_for_atomic_wave_function(xc_functional, psp_file_path)
         XC_functional: Exchange-correlation functional name
         psp_dir_path: Path to pseudopotential directory
     """
-    xc_functional = "123"
+
     if xc_functional not in VALID_XC_FUNCTIONAL_LIST:
         print(XC_FUNCTIONAL_NOT_VALID_WARNING)
         xc_functional = 'GGA_PBE'
@@ -992,17 +1016,23 @@ def get_default_generator_for_atomic_wave_function(xc_functional, psp_file_path)
             psp_dir_path  = psp_dir_path,
             psp_file_name = psp_file_name,
             all_electron_flag = False,
-            print_debug       = False,
+            verbose           = False,
         )
 
-        results = atomic_dft_solver.solve()
+        # New atom API: uniform-grid orbitals are opt-in (default False).
+        results = atomic_dft_solver.solve(evaluate_basis_on_uniform_grid=True)
 
         grid            = results['uniform_grid']
         orbitals        = results['orbitals_on_uniform_grid']
         occupation_info = results['occupation_info']
         info_dict       = results
+        if grid is None or orbitals is None:
+            raise RuntimeError(
+                "AtomicDFTSolver did not return uniform-grid orbitals; "
+                "ensure solve(evaluate_basis_on_uniform_grid=True)."
+            )
 
-        n_l_orbitals = np.zeros((2, occupation_info.n_states))
+        n_l_orbitals = np.zeros((occupation_info.n_states, 2))
         n_l_orbitals[:, 0] = occupation_info.occ_n
         n_l_orbitals[:, 1] = occupation_info.occ_l
         return grid, orbitals, n_l_orbitals, info_dict
@@ -1300,8 +1330,8 @@ class PDOSCalculator:
     bcy : str      # boundary condition in the y-direction, P for periodic, D for Dirichlet
     bcz : str      # boundary condition in the z-direction, P for periodic, D for Dirichlet
     band_num : int # number of bands
-    kpt_num : int  # number of symmetry adapted k-points
-    fermi : float  # Fermi level
+    kpt_num  : int  # number of symmetry adapted k-points
+    fermi    : float  # Fermi level
     
     xc_functional : str # exchange-correlation functional
     psp_fname_list : List[str] # list of psp file names
@@ -1310,7 +1340,6 @@ class PDOSCalculator:
     atom_count_list       : List[int]  # number of atoms of each type
     is_orthogonal_lattice : bool       # whether the lattice is orthogonal
     relax_flag            : Optional[int] = None  # relaxation flag
-
 
     kpt1 : int    # number of k-points in the x-direction
     kpt2 : int    # number of k-points in the y-direction
@@ -1340,6 +1369,11 @@ class PDOSCalculator:
     metric_tensor     : np.ndarray[float] # metric tensor g_ij = a_i · a_j
     metric_tensor_inv : np.ndarray[float] # inverse of metric tensor
 
+    # Spin (from SPARC SPIN_TYP in .out; must agree with .eigen / .psi)
+    # SPIN_TYP: 0 -> spin-unpolarized, 1 -> collinear spin-polarized
+    # nspin:    1 -> unpolarized path, 2 -> collinear up/down channels
+    spin_typ : int
+    nspin    : int
 
     # Parameters from UPF files (.upf)
     @dataclass
@@ -1384,8 +1418,8 @@ class PDOSCalculator:
         # - the distance between the atom and the grid points, in Bohr
         index_mask_and_effective_grid_point_positions_dict: IndexMaskDictType = field(default_factory=dict) # (x_index_shift, y_index_shift, z_index_shift) -> (index_mask, effective_grid_point_positions_array)
         
-        r_cut : float = 0.0 # cutoff radius, in Bohr
-        num_psdwfn : int = 0 # number of pseudo wave functions
+        r_cut        : float = 0.0 # cutoff radius, in Bohr
+        num_psdwfn   : int = 0 # number of pseudo wave functions
         num_orbitals : int = 0 # total number of orbitals
         phi_orbitals_list: List['PDOSCalculator.PhiOrbital'] = field(default_factory=list) # list of phi orbitals, len(phi_orbitals_list) = num_orbitals
 
@@ -1411,17 +1445,28 @@ class PDOSCalculator:
 
 
     # Parameters from SPARC's eigen file (.eigen)
-    eign           : np.ndarray[float] # (totkpt, band_num) energies sorted ascending within each k
-    occ            : np.ndarray[float] # (totkpt, band_num) occupations sorted according to eign
-    I_indices      : np.ndarray[int]   # (band_num, totkpt) argsort indices for each k
+    eign           : np.ndarray[float] # (band_num, totkpt) energies sorted ascending within each k (active spin)
+    occ            : np.ndarray[float] # (band_num, totkpt) occupations sorted according to eign (active spin)
+    I_indices      : np.ndarray[int]   # (band_num, totkpt) argsort indices for each k (active spin)
     kpts_store     : np.ndarray[float] # (totkpt, 3) k-vectors
     kpt_wts_store  : np.ndarray[float] # (totkpt,)  weights * (kpt1*kpt2*kpt3)
+    # Collinear spin (nspin=2): per-channel copies; None when nspin=1
+    eign_by_spin      : Optional[List[np.ndarray]]
+    occ_by_spin       : Optional[List[np.ndarray]]
+    I_indices_by_spin : Optional[List[np.ndarray]]
+    active_spin       : Optional[int]  # 0=up, 1=down when nspin=2; None when nspin=1
 
 
     # Parameters from the SPARC's orbital file (.psi)
-    psi_total : np.ndarray[float]         # (tot_grid_pt, band_num, totkpt)
-    header    : Dict[str, Any]            # header information, some already parsed from the SPARC's output file (.out), while contains some other information like "isGamma", "Nspinor_eig", "nspin", etc.
-    per_band_meta : List[Dict[str, Any]]  # Information for the bands in each k-point
+    # Ownership:
+    #   nspin=1: psi_total owns the (Nd, nband, nkpt) array; psi_spin_stack / psi_by_spin are None
+    #   nspin=2: psi_spin_stack owns the single (Nd, nband, nkpt, nspin) buffer;
+    #            psi_by_spin[i] and psi_total are views into that buffer (no extra copy)
+    psi_spin_stack : Optional[np.ndarray]       # contiguous owner for collinear spin; None when nspin=1
+    psi_by_spin    : Optional[List[np.ndarray]] # views of psi_spin_stack[..., ispin]; None when nspin=1
+    psi_total      : np.ndarray[float]          # active channel: alias of psi_by_spin[active_spin] or the nspin=1 array
+    header         : Dict[str, Any]             # .psi binary header (grid, isGamma, Nspinor_eig, etc.)
+    per_band_meta  : List[Dict[str, Any]]       # Information for the bands in each k-point
 
 
     # Parameters related to the cartesian coordinates of the grid points, and its relations to the cut-off radius
@@ -1435,9 +1480,9 @@ class PDOSCalculator:
     cartesian_gridwise_coord : np.ndarray[float] # cartesian coordinates of all the grid points in the unit cell
 
     # Parameters for the PDOS calculation
-    tot_orbital_num : int # total number of orbitals
-    overlap_matrix : Optional[np.ndarray[float]] # overlap matrix of different orbitals
-    S_inv_sqrt : Optional[np.ndarray[float]] # inverse square root of the overlap matrix
+    tot_orbital_num  : int # total number of orbitals
+    overlap_matrix   : Optional[np.ndarray[float]] # overlap matrix of different orbitals
+    S_inv_sqrt       : Optional[np.ndarray[float]] # inverse square root of the overlap matrix
     data_projections : np.ndarray[float] # coefficients of the projection of the wavefunction onto the atomic orbital basis
 
 
@@ -1449,20 +1494,21 @@ class PDOSCalculator:
     psi_file_loaded_flag        : bool = False # whether the psi file is loaded
 
 
-    def __init__(self, 
-                 upf_fname_list : Optional[List[str]], # list of upf file names
-                 output_fname   : str,                 # SPARC's output file name
-                 eigen_fname    : str,                 # eigen file name
-                 static_fname   : Optional[str],       # static file name
-                 psi_fname      : str,                 # orbital file name
-                 out_dirname    : str,                 # PDOS output directory name
-                 r_cut_max      : Union[List[float], float]     = 15.0,  # maximum cutoff radius for the atomic wave functions
-                 atomic_wave_function_tol      : float          = 1e-5,   # tolerance for the atomic wave functions
-                 orthogonalize_atomic_orbitals : bool           = False,  # whether to orthogonalize the atomic orbitals
-                 is_relaxation                 : bool           = False,  # The result is from relaxation
-                 geopt_fname                   : Optional[str]  = None,   # geopt file name
-                 k_point_parallelization       : Optional[bool] = None,  # whether to use k-point parallelization
-                 ):
+    def __init__(
+        self, 
+        upf_fname_list : Optional[List[str]], # list of upf file names
+        output_fname   : str,                 # SPARC's output file name
+        eigen_fname    : str,                 # eigen file name
+        static_fname   : Optional[str],       # static file name
+        psi_fname      : str,                 # orbital file name
+        out_dirname    : str,                 # PDOS output directory name
+        r_cut_max      : Union[List[float], float]     = 15.0,  # maximum cutoff radius for the atomic wave functions
+        atomic_wave_function_tol      : float          = 1e-5,   # tolerance for the atomic wave functions
+        orthogonalize_atomic_orbitals : bool           = False,  # whether to orthogonalize the atomic orbitals
+        is_relaxation                 : bool           = False,  # The result is from relaxation
+        geopt_fname                   : Optional[str]  = None,   # geopt file name
+        k_point_parallelization       : Optional[bool] = None,  # whether to use k-point parallelization
+    ):
         """
         1. Initialize the PDOSCalculator class
         """
@@ -1593,16 +1639,11 @@ class PDOSCalculator:
         else:
             self.read_sparc_geopt_file_parameters(fname = geopt_fname, atom_count_list = self.atom_count_list)
 
-
-
         # read in the SPARC's eigen file (.eigen)
         self.read_sparc_eigen_file_parameters(fname = eigen_fname)
 
-
         # # read in the SPARC's orbital file (.psi)
         self.read_sparc_orbital_file_parameters(fname = psi_fname)
-
-
 
         """
         3. Get cartesian coordinates and other information of the unit cell
@@ -1633,6 +1674,11 @@ class PDOSCalculator:
 
 
 
+    @staticmethod
+    def _spin_file_suffix(spin_label : Optional[str]) -> str:
+        return "" if spin_label is None else "_{}".format(spin_label)
+
+
     def run(self, 
             mu_PDOS : float = 0.2721140795,  # in eV, Gaussian width for DOS calculation
             N_PDOS  : int   = 1000,          # number of points in PDOS
@@ -1644,11 +1690,17 @@ class PDOSCalculator:
             print_overlap_matrix = False,
             ):
         
+        # Energy window: for collinear spin, span both spin channels
+        if self.nspin == 1:
+            eign_for_range = self.eign
+        else:
+            eign_for_range = np.concatenate(self.eign_by_spin, axis=0)
+
         # set the min_E_plot and max_E_plot
         if min_E_plot is None:
-            min_E_plot = self.eign.min() * self.Ha2eV - 5.0 * mu_PDOS
+            min_E_plot = eign_for_range.min() * self.Ha2eV - 5.0 * mu_PDOS
         if max_E_plot is None:
-            max_E_plot = self.eign.max() * self.Ha2eV + 5.0 * mu_PDOS
+            max_E_plot = eign_for_range.max() * self.Ha2eV + 5.0 * mu_PDOS
 
         # type check
         assert isinstance(mu_PDOS, float), MU_PDOS_NOT_FLOAT_ERROR.format(type(mu_PDOS))
@@ -1657,97 +1709,133 @@ class PDOSCalculator:
         assert isinstance(max_E_plot, float), MAX_E_PLOT_NOT_FLOAT_ERROR.format(type(max_E_plot)) # in eV
         if load_projection_data_from_txt_path is not None:
             assert isinstance(load_projection_data_from_txt_path, str), LOAD_PROJECTION_DATA_FROM_TXT_PATH_NOT_STRING_ERROR.format(type(load_projection_data_from_txt_path))
-            assert os.path.exists(load_projection_data_from_txt_path), LOAD_PROJECTION_DATA_FROM_TXT_PATH_NOT_EXIST_ERROR.format(load_projection_data_from_txt_path)
 
         self.mu_PDOS        : float     = mu_PDOS
         self.N_PDOS         : int       = N_PDOS
         self.min_E_plot     : float     = min_E_plot
         self.max_E_plot     : float     = max_E_plot
 
-        """
-        5. Project wavefuntions onto the atomic orbital basis.
-        """
+        # Same equations for each spin channel; unpolarized path uses a single pass (spin_label=None)
+        spin_jobs = [(None, None)] if self.nspin == 1 else [(0, "up"), (1, "down")]
+        results = []
         time5 = time.time()
-        if load_projection_data_from_txt_path is not None:
-            # projection_path = self.out_dirname + "/data_projections.txt"
-            assert os.path.exists(load_projection_data_from_txt_path), "Data projections file not found at {}".format(load_projection_data_from_txt_path)
-            data_projections, kpts_red = self.load_projections_from_txt(path = load_projection_data_from_txt_path)
-            print("\t data_projections.shape = ", data_projections.shape)
-        else:
-            data_projections = self.project_wavefunction_onto_atomic_orbital_basis_and_return_the_corresponding_coefficients(
-                orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,
-                mutiply_weights = True,
-                save_fname = self.out_dirname + "/data_projections.txt" if print_projection_data else None,
-                print_overlap_matrix = print_overlap_matrix,
-                )
-                
+        time6 = time5
+        DOS_by_spin = {}
 
-        # self.calculate_pdos(overlap_matrix = self.overlap_matrix)
-        """
-        6. Compute Projected Density of States (PDOS), and output the PDOS and DOS to the output directory
-        """
-        time6 = time.time()
+        for spin_index, spin_label in spin_jobs:
+            if spin_index is not None:
+                print("\n===== Collinear spin channel: {} (spin_index={}) =====".format(spin_label, spin_index))
+                self._activate_spin(spin_index)
 
-        E, PDOS_plot, DOS = self.compute_pdos_dos(data_projections = data_projections)
+            spin_suffix = self._spin_file_suffix(spin_label)
 
-        # initialize the pdos_header
-        dos_header = "Energy(eV)   DOS"
+            """
+            5. Project wavefuntions onto the atomic orbital basis.
+            """
+            time5 = time.time()
+            if load_projection_data_from_txt_path is not None:
+                # projection_path = self.out_dirname + "/data_projections.txt"
+                if spin_label is None:
+                    projection_path = load_projection_data_from_txt_path
+                else:
+                    root, ext = os.path.splitext(load_projection_data_from_txt_path)
+                    projection_path = "{}{}{}".format(root, spin_suffix, ext)
+                assert os.path.exists(projection_path), "Data projections file not found at {}".format(projection_path)
+                data_projections, kpts_red = self.load_projections_from_txt(path = projection_path)
+                print("\t data_projections.shape = ", data_projections.shape)
+            else:
+                save_fname = None
+                if print_projection_data:
+                    save_fname = self.out_dirname + "/data_projections{}.txt".format(spin_suffix)
+                data_projections = self.project_wavefunction_onto_atomic_orbital_basis_and_return_the_corresponding_coefficients(
+                    orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,
+                    mutiply_weights = True,
+                    save_fname = save_fname,
+                    print_overlap_matrix = print_overlap_matrix,
+                    )
 
-        # sum over the m index
-        if sum_over_m_index:
-            PDOS_plot = self._sum_over_m_index(PDOS_plot = PDOS_plot)
-            column_header_format = "(nl)"
-        else:
-            column_header_format = "(nl,m)"
+            # self.calculate_pdos(overlap_matrix = self.overlap_matrix)
+            """
+            6. Compute Projected Density of States (PDOS), and output the PDOS and DOS to the output directory
+            """
+            time6 = time.time()
+
+            E, PDOS_plot, DOS = self.compute_pdos_dos(data_projections = data_projections)
+            if spin_label is not None:
+                DOS_by_spin[spin_label] = DOS
+
+            # initialize the pdos_header
+            dos_header = "Energy(eV)   DOS"
+
+            # sum over the m index
+            if sum_over_m_index:
+                PDOS_plot = self._sum_over_m_index(PDOS_plot = PDOS_plot)
+                column_header_format = "(nl)"
+            else:
+                column_header_format = "(nl,m)"
 
 
-        print("Saving the PDOS and DOS to the output directory")
+            print("Saving the PDOS and DOS to the output directory{}".format(
+                "" if spin_label is None else " (spin {})".format(spin_label)))
 
-        np.savetxt(self.out_dirname + "/DOS.txt",
-                np.column_stack([E, DOS]),
-                header = dos_header, comments='', fmt="%.10f")
+            np.savetxt(self.out_dirname + "/DOS{}.txt".format(spin_suffix),
+                    np.column_stack([E, DOS]),
+                    header = dos_header, comments='', fmt="%.10f")
 
-        with open(self.out_dirname + "/PDOS.txt", "w") as f:
-            f.write(pdos_output_header_msg.format(
-                fermi_level = self.fermi,
-                broadening = self.mu_PDOS,
-                grid_points = self.N_PDOS,
-                min_energy = self.min_E_plot,
-                max_energy = self.max_E_plot,
-                bands = self.band_num,
-                kpoints = self.kpt_num,
-                atom_type_num = self.natom_types,
-                orbitals = self.tot_orbital_num,
-                proj_orbitals = len(PDOS_plot[0]),
-                volume = self.cell_volume,
-                calculation_time = time6 - self.time_init,
-                m_index_summed_over = sum_over_m_index,
-                atom_index_for_pdos = "All",
-                column_header_format = column_header_format,
-                orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,))
+            pdos_fname = self.out_dirname + "/PDOS{}.txt".format(spin_suffix)
+            with open(pdos_fname, "w") as f:
+                f.write(pdos_output_header_msg.format(
+                    fermi_level   = self.fermi,
+                    broadening    = self.mu_PDOS,
+                    grid_points   = self.N_PDOS,
+                    min_energy    = self.min_E_plot,
+                    max_energy    = self.max_E_plot,
+                    bands         = self.band_num,
+                    kpoints       = self.kpt_num,
+                    atom_type_num = self.natom_types,
+                    orbitals      = self.tot_orbital_num,
+                    proj_orbitals = len(PDOS_plot[0]),
+                    volume        = self.cell_volume,
+                    calculation_time     = time6 - self.time_init,
+                    m_index_summed_over  = sum_over_m_index,
+                    atom_index_for_pdos  = "All",
+                    column_header_format = column_header_format,
+                    orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,
+                ))
 
-        for atom_index, atom in enumerate(self.atoms):
-            start_idx, end_idx = self._get_atom_orbital_indices(target_atom = atom, sum_over_m_index = sum_over_m_index)
-            pdos_header, pdos_info_str = self._get_pdos_header_for_single_atom(
-                sum_over_m_index = sum_over_m_index, 
-                atom_of_interest = atom,
-                )
+            for atom_index, atom in enumerate(self.atoms):
+                start_idx, end_idx = self._get_atom_orbital_indices(target_atom = atom, sum_over_m_index = sum_over_m_index)
+                pdos_header, pdos_info_str = self._get_pdos_header_for_single_atom(
+                    sum_over_m_index = sum_over_m_index, 
+                    atom_of_interest = atom,
+                    )
 
-            with open(self.out_dirname + "/PDOS.txt", "a") as f:
-                atom_name = self.atom_species_list[atom.atom_type_index]
-                f.write(pdos_info_msg.format(
-                    atom_type = atom_name,
-                    atomic_number = name_to_atomic_number(atom_name),
-                    atom_index = atom_index,
-                    atom_position_cartesian = atom.atom_posn_cart,
-                    atom_position_fractional = atom.atom_posn_frac,
-                    pdos_unit = "states/eV",
-                    header_format = column_header_format,))
-                np.savetxt(f,
-                    np.column_stack([E, PDOS_plot[:, start_idx:end_idx]]),
-                    header = pdos_header, 
-                    comments='', 
-                    fmt='\t%.10f',)
+                with open(pdos_fname, "a") as f:
+                    atom_name = self.atom_species_list[atom.atom_type_index]
+                    f.write(pdos_info_msg.format(
+                        atom_type = atom_name,
+                        atomic_number = name_to_atomic_number(atom_name),
+                        atom_index = atom_index,
+                        atom_position_cartesian = atom.atom_posn_cart,
+                        atom_position_fractional = atom.atom_posn_frac,
+                        pdos_unit = "states/eV",
+                        header_format = column_header_format,))
+                    np.savetxt(f,
+                        np.column_stack([E, PDOS_plot[:, start_idx:end_idx]]),
+                        header = pdos_header, 
+                        comments='', 
+                        fmt='\t%.10f',)
+
+            results.append((E, PDOS_plot, DOS))
+
+        # For collinear spin, also write total DOS = up + down on the shared energy grid
+        if self.nspin > 1 and "up" in DOS_by_spin and "down" in DOS_by_spin:
+            E_ref = results[0][0]
+            DOS_tot = DOS_by_spin["up"] + DOS_by_spin["down"]
+            np.savetxt(self.out_dirname + "/DOS.txt",
+                       np.column_stack([E_ref, DOS_by_spin["up"], DOS_by_spin["down"], DOS_tot]),
+                       header = "Energy(eV)   DOS_up   DOS_down   DOS_tot",
+                       comments='', fmt="%.10f")
 
         time_final = time.time()
 
@@ -1755,13 +1843,14 @@ class PDOSCalculator:
         # print("DOS.sum() = ", DOS.sum())
         # print("DOS.sum() * (E[1] - E[0]) = ", DOS.sum() * (E[1] - E[0]))
 
-
         self.step5_time = time6 - time5
         self.step6_time = time_final - time6
 
         self.print_time_taken(load_projection_data_from_txt_path = load_projection_data_from_txt_path)
 
-        return E, PDOS_plot, DOS
+        if self.nspin == 1:
+            return results[0]
+        return results
 
 
     def _sum_over_m_index(self, PDOS_plot : np.ndarray):
@@ -1838,10 +1927,15 @@ class PDOSCalculator:
         Run the PDOSCalculator class for a single atom
         """
 
+        if self.nspin == 1:
+            eign_for_range = self.eign
+        else:
+            eign_for_range = np.concatenate(self.eign_by_spin, axis=0)
+
         if min_E_plot is None:
-            min_E_plot = self.eign.min() * self.Ha2eV - 5.0 * mu_PDOS
+            min_E_plot = eign_for_range.min() * self.Ha2eV - 5.0 * mu_PDOS
         if max_E_plot is None:
-            max_E_plot = self.eign.max() * self.Ha2eV + 5.0 * mu_PDOS
+            max_E_plot = eign_for_range.max() * self.Ha2eV + 5.0 * mu_PDOS
 
 
         # Type check
@@ -1862,109 +1956,128 @@ class PDOSCalculator:
         assert hasattr(self, "pdos_atom_type_list"), "pdos_atom_type_list is not initialized"
         assert hasattr(self, "pdos_atom_index_list"), "pdos_atom_index_list is not initialized"
 
-        """
-        5. Project wavefuntions onto the atomic orbital basis.
-        """
+        spin_jobs = [(None, None)] if self.nspin == 1 else [(0, "up"), (1, "down")]
+        last_E, last_PDOS, last_DOS = None, None, None
         time5 = time.time()
-        P_single_atom_array_list : List[np.ndarray] = []
-        if load_projection_data_from_txt_path is not None:
-            # projection_path = self.out_dirname + "/data_projections.txt"
-            assert os.path.exists(load_projection_data_from_txt_path), "Data projections file not found at {}".format(load_projection_data_from_txt_path)
-            data_projections, kpts_red = self.load_projections_from_txt(path = load_projection_data_from_txt_path)
+        time6 = time5
 
-            print("data_projections.shape = ", data_projections.shape)
-            for pdos_atom_index in self.pdos_atom_index_list:
-                atom_of_interest = self.atoms[pdos_atom_index]
-                start_idx, end_idx = self._get_atom_orbital_indices(target_atom = atom_of_interest)
+        for spin_index, spin_label in spin_jobs:
+            if spin_index is not None:
+                print("\n===== Collinear spin channel: {} (spin_index={}) =====".format(spin_label, spin_index))
+                self._activate_spin(spin_index)
+            spin_suffix = self._spin_file_suffix(spin_label)
 
-                P_single_atom_array = data_projections[:, :, start_idx:end_idx]
-                P_single_atom_array_list.append(P_single_atom_array)
-        else:
-            P_single_atom_array_list = self._project_single_atom_wavefunction_onto_atomic_orbital_basis(
-                pdos_atom_index_list = self.pdos_atom_index_list,
-                orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,
-                save_fname = self.out_dirname + "/data_projections.txt" if print_projection_data else None,
-                print_overlap_matrix = print_overlap_matrix,
-                )
-        self.P_single_atom_array_list = P_single_atom_array_list
+            """
+            5. Project wavefuntions onto the atomic orbital basis.
+            """
+            time5 = time.time()
+            P_single_atom_array_list : List[np.ndarray] = []
+            if load_projection_data_from_txt_path is not None:
+                # projection_path = self.out_dirname + "/data_projections.txt"
+                if spin_label is None:
+                    projection_path = load_projection_data_from_txt_path
+                else:
+                    root, ext = os.path.splitext(load_projection_data_from_txt_path)
+                    projection_path = "{}{}{}".format(root, spin_suffix, ext)
+                assert os.path.exists(projection_path), "Data projections file not found at {}".format(projection_path)
+                data_projections, kpts_red = self.load_projections_from_txt(path = projection_path)
 
-        
+                print("data_projections.shape = ", data_projections.shape)
+                for pdos_atom_index in self.pdos_atom_index_list:
+                    atom_of_interest = self.atoms[pdos_atom_index]
+                    start_idx, end_idx = self._get_atom_orbital_indices(target_atom = atom_of_interest)
 
-        """
-        6. Compute Projected Density of States (PDOS)   
-        """
-        time6 = time.time()
-
-        # Computation
-        E_list : List[np.ndarray] = []
-        DOS_list : List[np.ndarray] = []
-        PDOS_plot_list : List[np.ndarray] = []
-        for idx, pdos_atom_index in enumerate(self.pdos_atom_index_list):
-            atom_of_interest = self.atoms[pdos_atom_index]
-            E, PDOS_plot, DOS = self.compute_pdos_dos(data_projections = self.P_single_atom_array_list[idx])
-            E_list.append(E)
-            DOS_list.append(DOS)
-            PDOS_plot_list.append(PDOS_plot)
-
-        
-        # Output
-        print("Saving the PDOS and DOS to the output directory")
-
-        with open(self.out_dirname + "/PDOS.txt", "w") as f:
-            f.write(pdos_output_header_msg.format(
-                fermi_level = self.fermi,
-                broadening = self.mu_PDOS,
-                grid_points = self.N_PDOS,
-                min_energy = self.min_E_plot,
-                max_energy = self.max_E_plot,
-                bands = self.band_num,
-                kpoints = self.kpt_num,
-                atom_type_num = self.natom_types,
-                orbitals = self.tot_orbital_num,
-                proj_orbitals = sum(len(PDOS_plot_list[idx][0]) for idx in range(len(self.pdos_atom_index_list))),
-                volume = self.cell_volume,
-                calculation_time = time6 - self.time_init,
-                atom_index_for_pdos = self.pdos_atom_index_list,
-                m_index_summed_over = sum_over_m_index,
-                orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,))
-
-        for idx, pdos_atom_index in enumerate(self.pdos_atom_index_list):
-            atom = self.atoms[pdos_atom_index]
-            E = E_list[idx]
-            PDOS_plot = PDOS_plot_list[idx]
-
-            # initialize the pdos_header
-            pdos_header, pdos_info_str = self._get_pdos_header_for_single_atom(sum_over_m_index = sum_over_m_index, atom_of_interest = atom_of_interest)
-
-            # sum over the m index
-            if sum_over_m_index:
-                PDOS_plot = self._sum_over_m_index_for_single_atom(PDOS_plot = PDOS_plot, atom = atom_of_interest)
-                column_header_format = "(nl)"
+                    P_single_atom_array = data_projections[:, :, start_idx:end_idx]
+                    P_single_atom_array_list.append(P_single_atom_array)
             else:
-                column_header_format = "(nl,m)"
+                save_fname = None
+                if print_projection_data:
+                    save_fname = self.out_dirname + "/data_projections{}.txt".format(spin_suffix)
+                P_single_atom_array_list = self._project_single_atom_wavefunction_onto_atomic_orbital_basis(
+                    pdos_atom_index_list = self.pdos_atom_index_list,
+                    orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,
+                    save_fname = save_fname,
+                    print_overlap_matrix = print_overlap_matrix,
+                    )
+            self.P_single_atom_array_list = P_single_atom_array_list
 
-            start_idx, end_idx = self._get_atom_orbital_indices(
-                target_atom = atom, 
-                sum_over_m_index = sum_over_m_index)
-            pdos_header, pdos_info_str = self._get_pdos_header_for_single_atom(
-                sum_over_m_index = sum_over_m_index, 
-                atom_of_interest = atom,)
+            
 
-            with open(self.out_dirname + "/PDOS.txt", "a") as f:
-                atom_name = self.atom_species_list[atom.atom_type_index]
-                f.write(pdos_info_msg.format(
-                    atom_type = atom_name,
-                    atomic_number = name_to_atomic_number(atom_name),
-                    atom_index = pdos_atom_index,
-                    atom_position_cartesian = atom.atom_posn_cart,
-                    atom_position_fractional = atom.atom_posn_frac,
-                    pdos_unit = "states/eV",
-                    header_format = column_header_format,))
-                np.savetxt(f,
-                    np.column_stack([E, PDOS_plot]),
-                    header = pdos_header, 
-                    comments='', 
-                    fmt='\t%.10f',)
+            """
+            6. Compute Projected Density of States (PDOS)   
+            """
+            time6 = time.time()
+
+            # Computation
+            E_list : List[np.ndarray] = []
+            DOS_list : List[np.ndarray] = []
+            PDOS_plot_list : List[np.ndarray] = []
+            for idx, pdos_atom_index in enumerate(self.pdos_atom_index_list):
+                atom_of_interest = self.atoms[pdos_atom_index]
+                E, PDOS_plot, DOS = self.compute_pdos_dos(data_projections = self.P_single_atom_array_list[idx])
+                E_list.append(E)
+                DOS_list.append(DOS)
+                PDOS_plot_list.append(PDOS_plot)
+
+            
+            # Output
+            print("Saving the PDOS and DOS to the output directory{}".format(
+                "" if spin_label is None else " (spin {})".format(spin_label)))
+
+            pdos_fname = self.out_dirname + "/PDOS{}.txt".format(spin_suffix)
+            with open(pdos_fname, "w") as f:
+                f.write(pdos_output_header_msg.format(
+                    fermi_level = self.fermi,
+                    broadening = self.mu_PDOS,
+                    grid_points = self.N_PDOS,
+                    min_energy = self.min_E_plot,
+                    max_energy = self.max_E_plot,
+                    bands = self.band_num,
+                    kpoints = self.kpt_num,
+                    atom_type_num = self.natom_types,
+                    orbitals = self.tot_orbital_num,
+                    proj_orbitals = sum(len(PDOS_plot_list[idx][0]) for idx in range(len(self.pdos_atom_index_list))),
+                    volume = self.cell_volume,
+                    calculation_time = time6 - self.time_init,
+                    atom_index_for_pdos = self.pdos_atom_index_list,
+                    m_index_summed_over = sum_over_m_index,
+                    orthogonalize_atomic_orbitals = self.orthogonalize_atomic_orbitals,))
+
+            for idx, pdos_atom_index in enumerate(self.pdos_atom_index_list):
+                atom = self.atoms[pdos_atom_index]
+                E = E_list[idx]
+                PDOS_plot = PDOS_plot_list[idx]
+                atom_of_interest = atom
+
+                # sum over the m index
+                if sum_over_m_index:
+                    PDOS_plot = self._sum_over_m_index_for_single_atom(PDOS_plot = PDOS_plot, atom = atom_of_interest)
+                    column_header_format = "(nl)"
+                else:
+                    column_header_format = "(nl,m)"
+
+                # initialize the pdos_header
+                pdos_header, pdos_info_str = self._get_pdos_header_for_single_atom(
+                    sum_over_m_index = sum_over_m_index, 
+                    atom_of_interest = atom,)
+
+                with open(pdos_fname, "a") as f:
+                    atom_name = self.atom_species_list[atom.atom_type_index]
+                    f.write(pdos_info_msg.format(
+                        atom_type = atom_name,
+                        atomic_number = name_to_atomic_number(atom_name),
+                        atom_index = pdos_atom_index,
+                        atom_position_cartesian = atom.atom_posn_cart,
+                        atom_position_fractional = atom.atom_posn_frac,
+                        pdos_unit = "states/eV",
+                        header_format = column_header_format,))
+                    np.savetxt(f,
+                        np.column_stack([E, PDOS_plot]),
+                        header = pdos_header, 
+                        comments='', 
+                        fmt='\t%.10f',)
+
+            last_E, last_PDOS, last_DOS = E, PDOS_plot, DOS
 
 
         time_final = time.time()
@@ -1973,7 +2086,7 @@ class PDOSCalculator:
         self.step6_time = time_final - time6
         self.print_time_taken()
 
-        return E, PDOS_plot, DOS
+        return last_E, last_PDOS, last_DOS
 
 
     def _initialize_pdos_atom_type_and_index_list(
@@ -3390,7 +3503,11 @@ class PDOSCalculator:
 
 
 
-    def compute_pdos_dos(self, data_projections : np.ndarray):
+    def compute_pdos_dos(self, data_projections : np.ndarray, spin_deg : Optional[float] = None):
+        # Spin-unpolarized: each KS state carries spin degeneracy 2.
+        # Collinear spin: same formula applied per spin channel with spin_deg = 1.
+        if spin_deg is None:
+            spin_deg = 1.0 if self.nspin > 1 else 2.0
         E, PDOS_plot, DOS = _compute_pdos_dos(
             eig_eV = self.eign * self.Ha2eV,
             DATA_projections = data_projections,
@@ -3399,6 +3516,7 @@ class PDOSCalculator:
             N_PDOS = self.N_PDOS,
             min_E_plot = self.min_E_plot,
             max_E_plot = self.max_E_plot,
+            spin_deg = spin_deg,
             kpt_mesh_shape = (self.kpt1, self.kpt2, self.kpt3),
         )
         return E, PDOS_plot, DOS
@@ -3491,12 +3609,32 @@ class PDOSCalculator:
         # XC_FUNCTIONAL
         self.xc_functional = lines[_find_last_line_index("EXCHANGE_CORRELATION", lines)].split()[-1]
 
-        # BC
-        parts = lines[_find_last_line_index("BC", lines)].split()
+        # BC (match input tag "BC:" only; avoid false hits like "BCC" in filenames)
+        bc_idx = -1
+        for i in reversed(range(len(lines))):
+            if lines[i].lstrip().startswith("BC:"):
+                bc_idx = i
+                break
+        assert bc_idx >= 0, "BC: not found in the SPARC output file"
+        parts = lines[bc_idx].split()
         self.bcx, self.bcy, self.bcz = parts[1], parts[2], parts[3]
 
         # NSTATES
         self.band_num = int(re.findall(r'\d+', lines[_find_last_line_index("NSTATES", lines)])[0])
+
+        # SPIN_TYP: 0 -> spin-unpolarized (nspin=1), 1 -> collinear spin (nspin=2)
+        spin_typ_idx = _find_last_line_index("SPIN_TYP", lines)
+        if spin_typ_idx >= 0:
+            self.spin_typ = int(re.findall(r'\d+', lines[spin_typ_idx])[0])
+        else:
+            self.spin_typ = 0
+        if self.spin_typ == 0:
+            self.nspin = 1
+        elif self.spin_typ == 1:
+            self.nspin = 2
+        else:
+            raise NotImplementedError(SPIN_TYP_NOT_SUPPORTED_ERROR.format(self.spin_typ))
+        print("\t SPIN_TYP = {}, nspin = {}".format(self.spin_typ, self.nspin))
 
         # Number of symmetry adapted k-points
         self.kpt_num = int(re.findall(r'\d+', lines[_find_last_line_index("Number of symmetry adapted k-points", lines)])[0])
@@ -4142,11 +4280,14 @@ class PDOSCalculator:
     def read_sparc_eigen_file_parameters(self, fname : str):
         """
         Read in the SPARC's eigen file (.eigen)
-            eign           : (totkpt, band) energies sorted ascending within each k
+            eign           : (band, totkpt) energies sorted ascending within each k  [nspin=1]
+                             or active spin view after _activate_spin                [nspin=2]
             I_indices      : (band, totkpt) argsort indices for each k
             kpts_store     : (totkpt, 3) k-vectors
             kpt_wts_store  : (totkpt,)  weights * (kpt1*kpt2*kpt3)
 
+        For collinear spin (nspin=2), also stores eign_by_spin / occ_by_spin / I_indices_by_spin
+        as lists of length 2 (spin-up, spin-down), each with the same shapes as the nspin=1 case.
         """
         assert isinstance(fname, str), EIGEN_FNAME_NOT_STRING_ERROR.format(type(fname))
 
@@ -4155,21 +4296,33 @@ class PDOSCalculator:
         print("\t fname = ", fname)
         print("\t number of k-points = ", self.kpt_num)
         print("\t number of bands = ", self.band_num)
+        print("\t nspin = ", self.nspin)
 
 
         kpts_store = []
         kpt_wts_store = []
 
-        eign_array = np.zeros((self.band_num, self.kpt_num))        # (band, kpt), original order
-        eign_sorted_array = np.zeros((self.band_num, self.kpt_num)) # (band, kpt), sorted order
-        occ_array = np.zeros((self.band_num, self.kpt_num))         # (band, kpt), original order
-        occ_sorted_array = np.zeros((self.band_num, self.kpt_num))  # (band, kpt), sorted order
-        I_indices_array = np.zeros((self.band_num, self.kpt_num))   # (band, kpt), indexing
+        if self.nspin == 1:
+            eign_array = np.zeros((self.band_num, self.kpt_num))
+            eign_sorted_array = np.zeros((self.band_num, self.kpt_num))
+            occ_array = np.zeros((self.band_num, self.kpt_num))
+            occ_sorted_array = np.zeros((self.band_num, self.kpt_num))
+            I_indices_array = np.zeros((self.band_num, self.kpt_num))
+        else:
+            eign_array = np.zeros((self.band_num, self.kpt_num, self.nspin))
+            eign_sorted_array = np.zeros((self.band_num, self.kpt_num, self.nspin))
+            occ_array = np.zeros((self.band_num, self.kpt_num, self.nspin))
+            occ_sorted_array = np.zeros((self.band_num, self.kpt_num, self.nspin))
+            I_indices_array = np.zeros((self.band_num, self.kpt_num, self.nspin))
 
 
         kvec_re = re.compile(r"kred\s*#(\d+)\s*=\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)")
         wgt_re  = re.compile(r"=\s*(-?\d+\.\d+)")
         eign_re = re.compile(r"\s*(\d+)\s+([-+]?\d+\.\d+E[-+]?\d+)\s+([-+]?\d+\.\d+)")
+        eign_spin_re = re.compile(
+            r"\s*(\d+)\s+([-+]?\d+\.\d+E[-+]?\d+)\s+([-+]?\d+\.\d+)\s+"
+            r"([-+]?\d+\.\d+E[-+]?\d+)\s+([-+]?\d+\.\d+)"
+        )
 
 
         with open(fname, 'r') as f:
@@ -4203,36 +4356,98 @@ class PDOSCalculator:
                 raise ValueError(KPOINT_WEIGHTS_NOT_FOUND_ERROR.format(kpt_index + 1))
 
             # extract eigenvalues and occ
-            eig_start = kpt_vector_indices[kpt_index] + 3
-            eig_end = kpt_vector_indices[kpt_index] + 3 + self.band_num
-            eig_temp = [] 
-            occ_temp = []
-            for line in lines[eig_start:eig_end]:
-                eign_match = re.search(eign_re, line)
-                if eign_match:
-                    eig_temp.append(float(eign_match.group(2))) # Ha
-                    occ_temp.append(float(eign_match.group(3))) # may be 2.0 or fractional
-                else:
-                    raise ValueError(EIGEN_FILE_NO_EIGENVALUES_AND_OCCUPATIONS_FOUND_ERROR.format(kpt_index + 1, line))
+            # spin-unpolarized: kred / weight / header / data  -> data at +3
+            # collinear spin:   kred / weight / Spin-up header / column header / data -> data at +4
+            eig_start = kpt_vector_indices[kpt_index] + (3 if self.nspin == 1 else 4)
+            eig_end = eig_start + self.band_num
 
-            # sorting & indexing
-            indexing = np.argsort(eig_temp, axis=0)
+            if self.nspin == 1:
+                eig_temp = []
+                occ_temp = []
+                for line in lines[eig_start:eig_end]:
+                    eign_match = re.search(eign_re, line)
+                    if eign_match:
+                        eig_temp.append(float(eign_match.group(2))) # Ha
+                        occ_temp.append(float(eign_match.group(3))) # may be 2.0 or fractional
+                    else:
+                        raise ValueError(EIGEN_FILE_NO_EIGENVALUES_AND_OCCUPATIONS_FOUND_ERROR.format(kpt_index + 1, line))
 
-            eign_array[:, kpt_index] = np.asarray(eig_temp, dtype=float)
-            eign_sorted_array[:, kpt_index] = eign_array[indexing, kpt_index]
-            occ_array[:, kpt_index] = np.asarray(occ_temp, dtype=float)
-            occ_sorted_array[:, kpt_index] = occ_array[indexing, kpt_index]
-            I_indices_array[:,  kpt_index] = indexing
+                # sorting & indexing
+                indexing = np.argsort(eig_temp, axis=0)
+                eign_array[:, kpt_index] = np.asarray(eig_temp, dtype=float)
+                eign_sorted_array[:, kpt_index] = eign_array[indexing, kpt_index]
+                occ_array[:, kpt_index] = np.asarray(occ_temp, dtype=float)
+                occ_sorted_array[:, kpt_index] = occ_array[indexing, kpt_index]
+                I_indices_array[:,  kpt_index] = indexing
+            else:
+                eig_temp = [[] for _ in range(self.nspin)]
+                occ_temp = [[] for _ in range(self.nspin)]
+                for line in lines[eig_start:eig_end]:
+                    eign_match = re.search(eign_spin_re, line)
+                    if eign_match:
+                        eig_temp[0].append(float(eign_match.group(2)))  # spin-up Ha
+                        occ_temp[0].append(float(eign_match.group(3)))
+                        eig_temp[1].append(float(eign_match.group(4)))  # spin-down Ha
+                        occ_temp[1].append(float(eign_match.group(5)))
+                    else:
+                        raise ValueError(EIGEN_FILE_NO_EIGENVALUES_AND_OCCUPATIONS_FOUND_ERROR.format(kpt_index + 1, line))
+
+                for ispin in range(self.nspin):
+                    indexing = np.argsort(eig_temp[ispin], axis=0)
+                    eign_array[:, kpt_index, ispin] = np.asarray(eig_temp[ispin], dtype=float)
+                    eign_sorted_array[:, kpt_index, ispin] = eign_array[indexing, kpt_index, ispin]
+                    occ_array[:, kpt_index, ispin] = np.asarray(occ_temp[ispin], dtype=float)
+                    occ_sorted_array[:, kpt_index, ispin] = occ_array[indexing, kpt_index, ispin]
+                    I_indices_array[:, kpt_index, ispin] = indexing
         
-
-        # store the parsed parameters in the class
-        self.I_indices = I_indices_array # indexing
-        self.eign = eign_sorted_array    # already sorted
-        self.occ  = occ_sorted_array     # already sorted
 
         self.kpts_store = np.asarray(kpts_store, dtype=float)
         self.kpt_wts_store = np.asarray(kpt_wts_store, dtype=float)
 
+        if self.nspin == 1:
+            self.I_indices    = I_indices_array
+            self.eign         = eign_sorted_array
+            self.occ          = occ_sorted_array
+            self.eign_by_spin = None
+            self.occ_by_spin  = None
+            self.I_indices_by_spin = None
+            self.active_spin       = None
+            self.psi_spin_stack    = None
+            self.psi_by_spin       = None
+        else:
+            self.eign_by_spin      = [eign_sorted_array[:, :, ispin] for ispin in range(self.nspin)]
+            self.occ_by_spin       = [occ_sorted_array[:, :, ispin] for ispin in range(self.nspin)]
+            self.I_indices_by_spin = [I_indices_array[:, :, ispin] for ispin in range(self.nspin)]
+            # default active channel = spin-up; psi is attached later in read_sparc_orbital_file_parameters
+            self.active_spin    = 0
+            self.eign           = self.eign_by_spin[0]
+            self.occ            = self.occ_by_spin[0]
+            self.I_indices      = self.I_indices_by_spin[0]
+            self.psi_spin_stack = None
+            self.psi_by_spin    = None
+
+
+
+    def _activate_spin(self, spin_index : int):
+        """
+        Select the active collinear spin channel so that the existing
+        spin-unpolarized projection / DOS path can be reused unchanged.
+        spin_index: 0 = up, 1 = down.
+
+        psi_total is rebound to a view of psi_spin_stack / psi_by_spin[spin_index]
+        (no data copy).
+        """
+        assert self.nspin > 1, ACTIVATE_SPIN_REQUIRES_SPIN_POLARIZED_ERROR
+        assert 0 <= spin_index < self.nspin, SPIN_INDEX_OUT_OF_RANGE_ERROR.format(spin_index, self.nspin)
+        assert self.eign_by_spin is not None and self.I_indices_by_spin is not None and self.occ_by_spin is not None, \
+            ACTIVATE_SPIN_EIGEN_NOT_LOADED_ERROR
+
+        self.active_spin = spin_index
+        self.eign = self.eign_by_spin[spin_index]
+        self.occ = self.occ_by_spin[spin_index]
+        self.I_indices = self.I_indices_by_spin[spin_index]
+        if self.psi_by_spin is not None:
+            self.psi_total = self.psi_by_spin[spin_index]
 
 
     # @print_time("Time taken to read the SPARC's orbital file (function={}) : {:.4f} seconds \n")
@@ -4243,16 +4458,30 @@ class PDOSCalculator:
         assert isinstance(fname, str), "fname must be a string, get {} instead".format(type(fname))
         print("Reading the SPARC's orbital file")
 
-        psi_total, header, per_band_meta = read_psi(fname, verbose=False)
+        psi, header, per_band_meta = read_psi(fname, verbose=False)
 
         self.check_valid_psi_header(header = header)
 
         print("\t fname = ", fname)
-        print("\t psi_total.shape = ", psi_total.shape)
+        print("\t psi.shape = ", psi.shape)
+        print("\t nspin = ", self.nspin)
 
-        self.psi_total = psi_total
         self.header = header
         self.per_band_meta = per_band_meta
+
+        if self.nspin == 1:
+            self.psi_spin_stack = None
+            self.psi_by_spin = None
+            self.psi_total = psi
+            self.active_spin = None
+        else:
+            # Keep a single owning 4D buffer. Per-spin slices and psi_total are views only
+            # (do NOT ascontiguousarray-copy each spin — that would temporarily double memory).
+            self.psi_spin_stack = psi
+            self.psi_by_spin = [
+                self.psi_spin_stack[:, :, :, ispin] for ispin in range(self.nspin)
+            ]
+            self._activate_spin(0)
 
 
         # psi_kpt = psi_total[:, :, 0]
@@ -4404,6 +4633,7 @@ class PDOSCalculator:
             # nband and nkpt check
             assert header["nband"] == self.band_num, "nband = {} != header['nband'] = {}".format(self.band_num, header["nband"])
             assert header["nkpt"] == self.kpt_num, "nkpt = {} != header['nkpt'] = {}".format(self.kpt_num, header["nkpt"])
+            assert header["nspin"] == self.nspin, NSPIN_NOT_EQUAL_TO_PSI_HEADER_ERROR.format(self.nspin, header["nspin"])
         except Exception as e:
             print("\t Warning: Error in checking valid psi header: {}".format(e))
 

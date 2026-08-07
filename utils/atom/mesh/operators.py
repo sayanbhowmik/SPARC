@@ -1,75 +1,90 @@
 from __future__ import annotations
 import numpy as np
+import warnings
 from typing import Dict, Any, Optional, Tuple
-from .builder import LagrangeShapeFunctions, Mesh1D
+from .builder import LagrangeShapeFunctions, Mesh1D, Quadrature1D
 from dataclasses import dataclass
 
-
+MATRIX_ASSEMBLY_DTYPE = np.float64
 
 # Error messages
 NUMBER_OF_FINITE_ELEMENTS_NOT_GREATER_THAN_0_ERROR = \
-    "parameter number_of_finite_elements must be greater than 0, get {} instead"
+    "parameter 'number_of_finite_elements' must be greater than 0, get {} instead."
+FINITE_ELEMENT_NUMBER_NOT_GREATER_THAN_0_ERROR = \
+    "parameter 'finite_element_number' must be greater than 0, get {} instead."
+FINITE_ELEMENT_NUMBER_REQUIRED_ERROR = \
+    "parameter 'finite_element_number' is required."
+PHYSICAL_NODES_REQUIRED_ERROR = \
+    "parameter 'physical_nodes' is required."
+QUADRATURE_NODES_REQUIRED_ERROR = \
+    "parameter 'quadrature_nodes' is required."
+QUADRATURE_WEIGHTS_REQUIRED_ERROR = \
+    "parameter 'quadrature_weights' is required."
+NUMBER_OF_FINITE_ELEMENTS_DEPRECATED_WARNING = \
+    "WARNING: parameter 'number_of_finite_elements' is now deprecated, use 'finite_element_number' instead."
 PHYSICAL_NODES_NOT_1D_ARRAY_ERROR = \
-    "parameter physical_nodes must be a 1D array"
+    "parameter 'physical_nodes' must be a 1D array."
 QUADRATURE_NODES_NOT_1D_ARRAY_ERROR = \
-    "parameter quadrature_nodes must be a 1D array"
+    "parameter 'quadrature_nodes' must be a 1D array."
 QUADRATURE_WEIGHTS_NOT_1D_ARRAY_ERROR = \
-    "parameter quadrature_weights must be a 1D array"
+    "parameter 'quadrature_weights' must be a 1D array."
 QUADRATURE_NODES_AND_WEIGHTS_NOT_THE_SAME_LENGTH_ERROR = \
-    "parameter quadrature_nodes and quadrature_weights must have the same length"
+    "parameter 'quadrature_nodes' and quadrature_weights must have the same length."
 Z_NUCLEAR_NOT_FLOAT_ERROR = \
-    "parameter z_nuclear must be a float, get {} instead"
+    "parameter 'z_nuclear' must be a float, get {} instead."
 ALL_ELECTRON_FLAG_NOT_PROVIDED_ERROR = \
-    "parameter all_electron_flag must be provided"
+    "parameter 'all_electron_flag' must be provided."
 V_LOCAL_COMPONENT_PSP_NOT_NP_NDARRAY_ERROR = \
-    "parameter v_local_component_psp must be a numpy array, get {} instead"
+    "parameter 'v_local_component_psp' must be a numpy array, get {} instead."
 V_LOCAL_COMPONENT_PSP_NOT_THE_SAME_SIZE_AS_QUADRATURE_NODES_ERROR = \
-    "parameter v_local_component_psp must have the same size as quadrature_nodes, get {} and {} instead"
+    "parameter 'v_local_component_psp' must have the same size as quadrature_nodes, get {} and {} instead."
 POTENTIAL_VALUES_DO_NOT_MATCH_QUADRATURE_NODES_ERROR = \
-    "parameter potential_values shape {} does not match quadrature_nodes shape {}"
+    "parameter 'potential_values' shape {} does not match quadrature_nodes shape {}."
 POTENTIAL_VALUES_DO_NOT_MATCH_NUMBER_OF_FINITE_ELEMENTS_ERROR = \
-    "parameter potential_values shape {} does not match number_of_finite_elements shape {}"
+    "parameter 'potential_values' shape {} does not match number_of_finite_elements shape {}."
 POTENTIAL_VALUES_DO_NOT_MATCH_QUADRATURE_NODE_NUMBER_ERROR = \
-    "parameter potential_values shape {} does not match quadrature_node_number shape {}"
+    "parameter 'potential_values' shape {} does not match quadrature_node_number shape {}."
 POTENTIAL_VALUES_NDIM_ERROR = \
-    "parameter potential_values must be a 1D or 2D array, get dimension {} instead"
+    "parameter 'potential_values' must be a 1D or 2D array, get dimension {} instead."
 
 RHO_TYPE_ERROR_MESSAGE = \
-    "parameter rho must be a numpy array, get type {} instead"
+    "parameter 'rho' must be a numpy array, get type {} instead."
 RHO_NDIM_ERROR_MESSAGE = \
-    "parameter rho must be a 1D array, get dimension {} instead"
+    "parameter 'rho' must be a 1D array, get dimension {} instead."
 RHO_SHAPE_ERROR_MESSAGE = \
-    "parameter rho shape {} does not match quadrature_node_number shape {}"
+    "parameter 'rho' shape {} does not match quadrature_node_number shape {}."
+GRAD_RHO_TYPE_ERROR_MESSAGE = \
+    "parameter 'grad_rho' must be a numpy array, get type {} instead."
+GRAD_RHO_NDIM_ERROR_MESSAGE = \
+    "parameter 'grad_rho' must be a 1D array, get dimension {} instead."
+GRAD_RHO_SHAPE_ERROR_MESSAGE = \
+    "parameter 'grad_rho' shape {} does not match quadrature_node_number shape {}."
 
 DE_XC_DTAU_SHAPE_ERROR_MESSAGE = \
-    "parameter de_xc_dtau shape {} does not match quadrature_node_number shape {}"
+    "parameter 'de_xc_dtau' shape {} does not match quadrature_node_number shape {}."
 DE_XC_DTAU_NDIM_ERROR = \
-    "parameter de_xc_dtau must be 1D or 2D array, got {}D instead"
+    "parameter 'de_xc_dtau' must be 1D or 2D array, get {}D instead."
 
 GIVEN_GRID_NOT_MONOTONICALLY_INCREASING_ERROR = \
-    "The given grid must be monotonically increasing"
+    "The given grid must be monotonically increasing."
 GIVEN_GRID_NOT_WITHIN_PHYSICAL_NODES_ERROR = \
-    "The given grid must be within the physical nodes"
-ORBITAL_NDIM_ERROR_MESSAGE = \
-    "parameter orbital must be a 1D array, get dimension {} instead"
-ORBITAL_SHAPE_ERROR_MESSAGE = \
-    "parameter orbital shape {} does not match number_of_finite_elements * physical_node_number shape {}"
+    "The given grid must be within the physical nodes."
+FIELD_VALUES_NDIM_ERROR_MESSAGE = \
+    "parameter 'field_values' must be a 1D array, get dimension {} instead."
+FIELD_VALUES_2D_NDIM_ERROR_MESSAGE = \
+    "parameter 'field_values' must be a 2D array with shape (n_elem * n_quad, n_fields), get dimension {} instead."
+FIELD_VALUES_SHAPE_ERROR_MESSAGE = \
+    "parameter 'field_values' shape {} does not match number_of_finite_elements * quadrature_node_number shape {}."
+
+ORBITAL_COEFFICIENTS_SHAPE_ERROR_MESSAGE = \
+    "parameter 'field_values' (here the orbital coefficients) length {} does not match number of FE nodes excluding boundary nodes shape {}."
 
 
 # Warning messages
 V_LOCAL_COMPONENT_PSP_NOT_USED_IN_ALL_ELECTRON_CALCULATIONS_WARNING = \
-    "WARNING: v_local_component_psp is not used in all-electron calculations"
+    "WARNING: parameter 'v_local_component_psp' is not used in all-electron calculations"
 Z_NUCLEAR_NOT_USED_IN_NON_ALL_ELECTRON_CALCULATIONS_WARNING = \
-    "WARNING: z_nuclear is not used in non-all-electron calculations"
-NUMBER_OF_FINITE_ELEMENTS_NOT_USED_WHEN_USING_GRID_DATA_WARNING = \
-    "WARNING: number_of_finite_elements is not used when using GridData"
-PHYSICAL_NODES_NOT_USED_WHEN_USING_GRID_DATA_WARNING = \
-    "WARNING: physical_nodes is not used when using GridData"
-QUADRATURE_NODES_NOT_USED_WHEN_USING_GRID_DATA_WARNING = \
-    "WARNING: quadrature_nodes is not used when using GridData"
-QUADRATURE_WEIGHTS_NOT_USED_WHEN_USING_GRID_DATA_WARNING = \
-    "WARNING: quadrature_weights is not used when using GridData"
-
+    "WARNING: parameter 'z_nuclear' is not used in non-all-electron calculations"
 
 
 @dataclass(frozen=True)
@@ -77,30 +92,33 @@ class GridData:
     """
     Immutable grid information needed for XC calculations.
     
-    Attributes
+    Parameters
     ----------
-    r_quad : np.ndarray
-        Radial quadrature points
-    w_quad : np.ndarray
-        Quadrature weights
-    derivative_matrix : np.ndarray
-        Matrix for computing derivatives at quadrature points
-        Shape: (n_elem, n_quad, n_quad)
-    n_elem : int
+    finite_element_number : int
         Number of finite elements
-    n_quad_per_elem : int
-        Number of quadrature points per element
+    physical_nodes : np.ndarray
+        Physical FE nodes
+    quadrature_nodes : np.ndarray
+        Quadrature points
+    quadrature_weights : np.ndarray
+        Quadrature weights
     """
-    number_of_finite_elements: int
-    physical_nodes           : np.ndarray
-    quadrature_nodes         : np.ndarray
-    quadrature_weights       : np.ndarray
+    finite_element_number : int
+    physical_nodes        : np.ndarray
+    quadrature_nodes      : np.ndarray
+    quadrature_weights    : np.ndarray
+    
+    # Deprecated: for backward compatibility
+    @property
+    def number_of_finite_elements(self) -> int:
+        """Deprecated: use finite_element_number instead."""
+        return self.finite_element_number
 
 
     def __post_init__(self):
         # check if the input parameters are valid
-        assert self.number_of_finite_elements > 0, \
-            NUMBER_OF_FINITE_ELEMENTS_NOT_GREATER_THAN_0_ERROR.format(self.number_of_finite_elements)
+        assert self.finite_element_number > 0, \
+            FINITE_ELEMENT_NUMBER_NOT_GREATER_THAN_0_ERROR.format(self.finite_element_number)
         assert self.physical_nodes.ndim == 1, \
             PHYSICAL_NODES_NOT_1D_ARRAY_ERROR
         assert self.quadrature_nodes.ndim == 1, \
@@ -112,93 +130,123 @@ class GridData:
             
 
 
+    @classmethod
+    def from_basic(
+        cls, 
+        domain_size             : float,
+        finite_element_number   : int,
+        polynomial_order        : int,
+        quadrature_point_number : int,
+        mesh_type               : str,
+        mesh_concentration      : float,
+    ) -> 'GridData':
+
+        # Generate Lobatto interpolation nodes on reference interval [-1, 1]
+        interp_nodes_ref, _ = Quadrature1D.lobatto(polynomial_order)
+        
+        # Generate mesh boundaries
+        mesh1d = Mesh1D(
+            domain_size            = domain_size,
+            finite_elements_number = finite_element_number,
+            mesh_type              = mesh_type,
+            clustering_param       = mesh_concentration,
+        )
+        boundaries_nodes, _ = mesh1d.generate_mesh_nodes_and_width()
+
+        # Generate standard FE nodes
+        global_nodes = Mesh1D.generate_fe_nodes(
+            boundaries_nodes = boundaries_nodes,
+            interp_nodes     = interp_nodes_ref
+        )
+
+        # Generate Gauss-Legendre quadrature nodes and weights
+        quadrature_nodes_ref, quadrature_weights_ref = Quadrature1D.gauss_legendre(quadrature_point_number)
+
+        # Map quadrature to physical elements
+        quadrature_nodes, quadrature_weights = Mesh1D.map_quadrature_to_physical_elements(
+            boundaries_nodes = boundaries_nodes,
+            interp_nodes     = quadrature_nodes_ref,
+            interp_weights   = quadrature_weights_ref,
+            flatten          = True
+        )
+
+        return cls(
+            finite_element_number = finite_element_number,
+            physical_nodes        = global_nodes,
+            quadrature_nodes      = quadrature_nodes,
+            quadrature_weights    = quadrature_weights,
+        )
+        
+
 
 class RadialOperatorsBuilder:
     """
     Assemble radial FE operators and interpolation matrices.
 
-    Can be initialized either from individual parameters or from GridData.
+    Initialize from individual parameters, or use from_grid_data() for GridData.
     """
 
     def __init__(self, 
-        number_of_finite_elements : Optional[int] = None, 
+        finite_element_number     : Optional[int]        = None,
         physical_nodes            : Optional[np.ndarray] = None, 
         quadrature_nodes          : Optional[np.ndarray] = None,
         quadrature_weights        : Optional[np.ndarray] = None,
-        grid_data                 : Optional[GridData] = None,
         verbose                   : bool = False,
-        ):
+        builder_label             : str = "",  # label for the builder, will be printed in the summary
+
+        # Deprecated parameters
+        number_of_finite_elements : Optional[int] = None,  # Deprecated: use finite_element_number instead
+    ):
         """
-        Initialize radial operators builder.
+        Initialize radial operators builder from individual parameters.
         
-        Two initialization modes:
-        
-        Mode 1 - From individual parameters:
-            number_of_finite_elements, physical_nodes, quadrature_nodes, quadrature_weights
-        
-        Mode 2 - From GridData (preferred):
-            grid_data (contains all the above)
+        For initialization from GridData, use RadialOperatorsBuilder.from_grid_data().
         
         Parameters
         ----------
-        grid_data : GridData, optional
-            Grid data object (preferred way)
-        number_of_finite_elements : int, optional
-            Number of finite elements (legacy way)
-        physical_nodes : np.ndarray, optional
-            Physical FE nodes (legacy way)
-        quadrature_nodes : np.ndarray, optional
-            Quadrature points (legacy way)
-        quadrature_weights : np.ndarray, optional
-            Quadrature weights (legacy way)
+        finite_element_number : int
+            Number of finite elements
+        physical_nodes : np.ndarray
+            Physical FE nodes
+        quadrature_nodes : np.ndarray
+            Quadrature points
+        quadrature_weights : np.ndarray
+            Quadrature weights
+        verbose : bool, optional
+            If True, print initialization summary. Default: False
+        builder_label : str, optional
+            Label for the builder. Default: ""
+        number_of_finite_elements : int, optional, deprecated
+            Deprecated parameter. Use 'finite_element_number' instead.
         """
-        # Extract parameters from GridData or use individual parameters
-        if grid_data is not None:
-            # Mode 2: Use GridData (preferred)
-            self.number_of_finite_elements = grid_data.number_of_finite_elements
-            self.physical_nodes = grid_data.physical_nodes
-            self.quadrature_nodes = grid_data.quadrature_nodes
-            self.quadrature_weights = grid_data.quadrature_weights
 
-            # if other parameters are provided, they will be ignored, and a warning will be printed
-            if number_of_finite_elements is not None:
-                print(NUMBER_OF_FINITE_ELEMENTS_NOT_USED_WHEN_USING_GRID_DATA_WARNING)
-            if physical_nodes is not None:
-                print(PHYSICAL_NODES_NOT_USED_WHEN_USING_GRID_DATA_WARNING)
-            if quadrature_nodes is not None:
-                print(QUADRATURE_NODES_NOT_USED_WHEN_USING_GRID_DATA_WARNING)
-            if quadrature_weights is not None:
-                print(QUADRATURE_WEIGHTS_NOT_USED_WHEN_USING_GRID_DATA_WARNING)
-        else:
-            # Mode 1: Use individual parameters (legacy)
-            assert number_of_finite_elements is not None, \
-                "number_of_finite_elements required"
-            assert physical_nodes is not None, \
-                "physical_nodes required"
-            assert quadrature_nodes is not None, \
-                "quadrature_nodes required"
-            assert quadrature_weights is not None, \
-                "quadrature_weights required"
-            
-            # Validation
-            assert physical_nodes.ndim == 1, \
-                PHYSICAL_NODES_NOT_1D_ARRAY_ERROR
-            assert quadrature_nodes.ndim == 1, \
-                QUADRATURE_NODES_NOT_1D_ARRAY_ERROR
-            assert quadrature_weights.ndim == 1, \
-                QUADRATURE_WEIGHTS_NOT_1D_ARRAY_ERROR
-            assert quadrature_nodes.shape[0] == quadrature_weights.shape[0], \
-                QUADRATURE_NODES_AND_WEIGHTS_NOT_THE_SAME_LENGTH_ERROR
+        # Handle deprecated parameter
+        if number_of_finite_elements is not None:
+            if finite_element_number is not None:
+                raise ValueError("Cannot specify both 'finite_element_number' and deprecated 'number_of_finite_elements'. Use 'finite_element_number' only.")
+            finite_element_number = number_of_finite_elements
+            if verbose:
+                print(NUMBER_OF_FINITE_ELEMENTS_DEPRECATED_WARNING)
 
-            self.number_of_finite_elements = number_of_finite_elements
-            self.physical_nodes = physical_nodes
-            self.quadrature_nodes = quadrature_nodes
-            self.quadrature_weights = quadrature_weights
+        # Required parameters (must be at the beginning)
+        assert physical_nodes is not None, PHYSICAL_NODES_REQUIRED_ERROR
+        assert quadrature_nodes is not None, QUADRATURE_NODES_REQUIRED_ERROR
+        assert quadrature_weights is not None, QUADRATURE_WEIGHTS_REQUIRED_ERROR
+        assert finite_element_number is not None, FINITE_ELEMENT_NUMBER_REQUIRED_ERROR
+        
+        # dimension and shape checks
+        assert physical_nodes.ndim == 1, PHYSICAL_NODES_NOT_1D_ARRAY_ERROR
+        assert quadrature_nodes.ndim == 1, QUADRATURE_NODES_NOT_1D_ARRAY_ERROR
+        assert quadrature_weights.ndim == 1, QUADRATURE_WEIGHTS_NOT_1D_ARRAY_ERROR
+        assert quadrature_nodes.shape[0] == quadrature_weights.shape[0], \
+            QUADRATURE_NODES_AND_WEIGHTS_NOT_THE_SAME_LENGTH_ERROR
 
-
-
-        # Store verbose flag
-        self.verbose = verbose
+        self.assembly_dtype        = MATRIX_ASSEMBLY_DTYPE
+        self.finite_element_number = finite_element_number
+        self.physical_nodes        = np.asarray(physical_nodes)
+        self.quadrature_nodes      = np.asarray(quadrature_nodes)
+        self.quadrature_weights    = np.asarray(quadrature_weights)
+        self.verbose               = verbose
         
         # Reshape to element-wise structure
         self._reshape_grid_data()
@@ -208,24 +256,60 @@ class RadialOperatorsBuilder:
         
         # Print summary if verbose
         if self.verbose:
-            self._print_initialization_summary()
+            self._print_initialization_summary(builder_label)
     
     
+    @classmethod
+    def from_grid_data(cls, grid_data: GridData, verbose: bool = False, builder_label: str = "") -> 'RadialOperatorsBuilder':
+        """
+        Create RadialOperatorsBuilder from GridData.
+        
+        Convenience factory method for cleaner code.
+        
+        Parameters
+        ----------
+        grid_data : GridData
+            Grid data object
+        verbose : bool, optional
+            If True, print initialization summary. Default: False
+        builder_label : str, optional
+            Label for the builder. Default: ""
+        
+        Returns
+        -------
+        RadialOperatorsBuilder
+            Initialized operators builder
+        
+        Example
+        -------
+        >>> grid_data = GridData(...)
+        >>> ops = RadialOperatorsBuilder.from_grid_data(grid_data, verbose=True)
+        """
+        return cls(
+            finite_element_number = grid_data.finite_element_number,
+            physical_nodes        = grid_data.physical_nodes,
+            quadrature_nodes      = grid_data.quadrature_nodes,
+            quadrature_weights    = grid_data.quadrature_weights,
+            verbose               = verbose,
+            builder_label         = builder_label,
+        )
+
+
     def _reshape_grid_data(self):
         """Reshape 1D arrays to (n_elem, n_points) structure."""
         self.physical_nodes_reshaped = Mesh1D.fe_flat_to_block2d(
             self.physical_nodes, 
-            self.number_of_finite_elements, 
+            self.finite_element_number, 
             endpoints_shared=True
         )
         self.quadrature_nodes_reshaped = Mesh1D.fe_flat_to_block2d(
             self.quadrature_nodes, 
-            self.number_of_finite_elements, 
+            self.finite_element_number, 
             endpoints_shared=False
         )
         self.quadrature_weights_reshaped = Mesh1D.fe_flat_to_block2d(
             self.quadrature_weights, 
-            self.number_of_finite_elements, 
+            self.finite_element_number, 
             endpoints_shared=False
         )
         
@@ -243,49 +327,27 @@ class RadialOperatorsBuilder:
         # Shape: (n_elem, n_quad, n_basis)
     
     
-    def _print_initialization_summary(self):
+    def _print_initialization_summary(self, label: str = ""):
         """Print initialization summary."""
-        print("=" * 60)
-        print("\t\t RadialOperatorsBuilder")
-        print("=" * 60)
-        print(f"\t Number of elements            : {self.number_of_finite_elements}")
+        print("=" * 75)
+        print("RadialOperatorsBuilder ({})".format(label).center(75))
+        print("=" * 75)
+        print(f"\t Number of elements            : {self.finite_element_number}")
         print(f"\t Physical nodes per element    : {self.physical_nodes_reshaped.shape[1]}")
         print(f"\t Quadrature points per element : {self.quadrature_node_number}")
-        print(f"\t Total DOFs                    : {self.number_of_finite_elements * self.physical_node_number + 1}")
+        print(f"\t Total DOFs                    : {self.finite_element_number * self.physical_node_number + 1}")
         print(f"\t Total quadrature points       : {len(self.quadrature_nodes)}")
         print(f"\t Lagrange basis shape          : {self.lagrange_basis.shape}")
         print(f"\t Lagrange derivatives shape    : {self.lagrange_basis_derivatives.shape}")
         print()
     
+    # Deprecated: for backward compatibility
+    @property
+    def number_of_finite_elements(self) -> int:
+        """Deprecated: use finite_element_number instead."""
+        return self.finite_element_number
     
-    @classmethod
-    def from_grid_data(cls, grid_data: GridData, verbose: bool = False) -> 'RadialOperatorsBuilder':
-        """
-        Create RadialOperatorsBuilder from GridData.
-        
-        Convenience factory method for cleaner code.
-        
-        Parameters
-        ----------
-        grid_data : GridData
-            Grid data object
-        verbose : bool, optional
-            If True, print initialization summary
-            Default: False
-        
-        Returns
-        -------
-        RadialOperatorsBuilder
-            Initialized operators builder
-        
-        Example
-        -------
-        >>> grid_data = GridData(...)
-        >>> ops = RadialOperatorsBuilder.from_grid_data(grid_data, verbose=True)
-        """
-        return cls(grid_data=grid_data, verbose=verbose)
-
-
+    
     def get_H_kinetic(self) -> np.ndarray:
         """
         Kinetic energy matrix
@@ -373,8 +435,8 @@ class RadialOperatorsBuilder:
                 POTENTIAL_VALUES_DO_NOT_MATCH_QUADRATURE_NODES_ERROR.format(potential_values.size, self.quadrature_nodes_reshaped.size)
             potential_reshaped = potential_values.reshape(self.quadrature_nodes_reshaped.shape)
         elif potential_values.ndim == 2:
-            assert potential_values.shape[0] == self.number_of_finite_elements, \
-                POTENTIAL_VALUES_DO_NOT_MATCH_NUMBER_OF_FINITE_ELEMENTS_ERROR.format(potential_values.shape[0], self.number_of_finite_elements)
+            assert potential_values.shape[0] == self.finite_element_number, \
+                POTENTIAL_VALUES_DO_NOT_MATCH_NUMBER_OF_FINITE_ELEMENTS_ERROR.format(potential_values.shape[0], self.finite_element_number)
             assert potential_values.shape[1] == self.quadrature_node_number, \
                 POTENTIAL_VALUES_DO_NOT_MATCH_QUADRATURE_NODE_NUMBER_ERROR.format(potential_values.shape[1], self.quadrature_node_number)
             potential_reshaped = potential_values
@@ -432,8 +494,8 @@ class RadialOperatorsBuilder:
                 DE_XC_DTAU_SHAPE_ERROR_MESSAGE.format(de_xc_dtau.size, self.quadrature_nodes_reshaped.size)
             de_xc_dtau_reshaped = de_xc_dtau.reshape(self.quadrature_nodes_reshaped.shape)
         elif de_xc_dtau.ndim == 2:
-            assert de_xc_dtau.shape[0] == self.number_of_finite_elements, \
-                DE_XC_DTAU_SHAPE_ERROR_MESSAGE.format(de_xc_dtau.shape[0], self.number_of_finite_elements)
+            assert de_xc_dtau.shape[0] == self.finite_element_number, \
+                DE_XC_DTAU_SHAPE_ERROR_MESSAGE.format(de_xc_dtau.shape[0], self.finite_element_number)
             assert de_xc_dtau.shape[1] == self.quadrature_node_number, \
                 DE_XC_DTAU_SHAPE_ERROR_MESSAGE.format(de_xc_dtau.shape[1], self.quadrature_node_number)
             de_xc_dtau_reshaped = de_xc_dtau
@@ -441,7 +503,7 @@ class RadialOperatorsBuilder:
             raise ValueError(DE_XC_DTAU_NDIM_ERROR.format(de_xc_dtau.ndim))
         
         # Get derivative matrix for computing d(de_xc_dtau)/dr
-        D = self.get_derivative_matrix()  # Shape: (n_elem, n_quad, n_quad)
+        D = self.get_derivative_matrix_with_quadrature_basis()  # Shape: (n_elem, n_quad, n_quad)
         
         # Compute gradient: v3grad = D @ de_xc_dtau (element-wise)
         # For each element: v3grad[e, i] = sum_k D[e, i, k] * de_xc_dtau[e, k]
@@ -534,12 +596,14 @@ class RadialOperatorsBuilder:
         return H_r_inv_sq
 
 
-    def get_S(self) -> np.ndarray:
+    def get_S(self, exclude_boundary: bool = False) -> np.ndarray:
         """
         Overlap matrix S
         """
         # check if the overlap matrix has been computed
         if hasattr(self, "_S"):
+            if exclude_boundary:
+                return self._S[1:-1,1:-1]
             return self._S
         
         # compute the overlap matrix
@@ -554,7 +618,10 @@ class RadialOperatorsBuilder:
         
         # store the overlap matrix
         self._S = S
-        
+
+        if exclude_boundary:
+            return S[1:-1,1:-1]
+
         return S
 
 
@@ -567,7 +634,11 @@ class RadialOperatorsBuilder:
             return self._S_inv_sqrt
         
         S = self.get_S()
-        eigvals, eigvecs = np.linalg.eigh(S, UPLO='L')
+        try:
+            eigvals, eigvecs = np.linalg.eigh(S, UPLO='L')
+        except TypeError:
+            S64 = np.asarray(S, dtype=np.float64)
+            eigvals, eigvecs = np.linalg.eigh(S64, UPLO='L')
         S_inv_sqrt = eigvecs @ np.diag(1.0 / np.sqrt(eigvals)) @ eigvecs.T
         S_inv_sqrt = 0.5 * (S_inv_sqrt + S_inv_sqrt.T)  # Symmetrize
         
@@ -578,6 +649,10 @@ class RadialOperatorsBuilder:
     def get_derivative_matrix(self) -> np.ndarray:
         """
         Differentiation matrix for computing derivatives at quadrature points.
+        
+        .. deprecated:: 
+            This method is deprecated and will be removed in a future version.
+            Use :meth:`get_derivative_matrix_with_quadrature_basis` instead.
         
         This matrix D enables direct computation of derivatives from function values:
             f'(x_quad) = D @ f(x_quad)
@@ -596,26 +671,110 @@ class RadialOperatorsBuilder:
             Shape: (n_elements, n_quad_points, n_quad_points)
             D[e, i, k] maps f(x_k) → f'(x_i) within element e
         """
-        if hasattr(self, "_derivative_matrix"):
-            return self._derivative_matrix
+        warnings.warn(
+            "'get_derivative_matrix()' is deprecated and will be removed in a future version. "
+            "Use 'get_derivative_matrix_with_quadrature_basis()' instead. "
+            "The new method uses quadrature points as basis nodes, which is more efficient "
+            "and matches the reference implementation.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         
-        # Compute pseudoinverse of Lagrange basis: L⁺ maps values → coefficients
-        # Shape: (n_elem, n_basis, n_quad) where n_basis = physical_node_number
-        n_elem = self.number_of_finite_elements
-        n_basis = self.physical_node_number
-        n_quad = self.quadrature_node_number
+        # ============================================================================
+        # OLD IMPLEMENTATION (preserved for reference, not executed)
+        # ============================================================================
+        # The original implementation using pseudoinverse of Lagrange basis.
+        # This approach computes D = (dL/dx) @ L⁺ where L⁺ is the pseudoinverse.
+        # Kept here for reference in case needed for future use cases.
+        #
+        # if hasattr(self, "_derivative_matrix"):
+        #     return self._derivative_matrix
+        # 
+        # # Compute pseudoinverse of Lagrange basis: L⁺ maps values → coefficients
+        # # Shape: (n_elem, n_basis, n_quad) where n_basis = physical_node_number
+        # n_elem = self.number_of_finite_elements
+        # n_basis = self.physical_node_number
+        # n_quad = self.quadrature_node_number
+        # 
+        # basis_pseudoinverse = np.zeros((n_elem, n_basis, n_quad))
+        # for elem_idx in range(n_elem):
+        #     # self.lagrange_basis[elem_idx] has shape (n_quad, n_basis)
+        #     basis_pseudoinverse[elem_idx] = np.linalg.pinv(self.lagrange_basis[elem_idx])
+        # 
+        # # Differentiation matrix: D = (dL/dx) @ L⁺
+        # # Maps function values at quadrature points to derivative values
+        # derivative_matrix = np.matmul(self.lagrange_basis_derivatives, basis_pseudoinverse)
+        # 
+        # self._derivative_matrix = derivative_matrix
+        # return derivative_matrix
         
-        basis_pseudoinverse = np.zeros((n_elem, n_basis, n_quad))
-        for elem_idx in range(n_elem):
-            # self.lagrange_basis[elem_idx] has shape (n_quad, n_basis)
-            basis_pseudoinverse[elem_idx] = np.linalg.pinv(self.lagrange_basis[elem_idx])
+        # For backward compatibility, delegate to the new method
+        # This ensures the function still works but uses the improved implementation
+        return self.get_derivative_matrix_with_quadrature_basis()
+
+
+
+    def get_derivative_matrix_with_quadrature_basis(self) -> np.ndarray:
+        """
+        Compute derivative matrix where basis function nodes = quadrature points.
         
-        # Differentiation matrix: D = (dL/dx) @ L⁺
-        # Maps function values at quadrature points to derivative values
-        derivative_matrix = np.matmul(self.lagrange_basis_derivatives, basis_pseudoinverse)
+        This method computes a special derivative matrix where the basis function nodes
+        are set to be the same as quadrature points. This matches the reference code:
+            D = lagrange_polynomial(r_quad1, q, r_quad1, q, S)[1]
         
-        self._derivative_matrix = derivative_matrix
+        In this case:
+        - n_quad == n_basis (quadrature points = basis nodes)
+        - D[i, j] directly gives derivative of basis function j at quadrature point i
+        - No need for inverse or pseudoinverse!
+        
+        The derivative matrix D satisfies:
+            f'(x_quad) = D @ f(x_quad)
+        
+        where:
+        - f(x_quad): function values at quadrature points, shape (n_elem, n_quad)
+        - f'(x_quad): derivative values at quadrature points, shape (n_elem, n_quad)
+        - D: derivative matrix, shape (n_elem, n_quad, n_quad)
+        
+        Returns
+        -------
+        np.ndarray
+            Shape: (n_elements, n_quad_points, n_quad_points)
+            D[e, i, k] maps f(x_k) → f'(x_i) within element e
+        """
+        if hasattr(self, "_derivative_matrix_quad_basis"):
+            return self._derivative_matrix_quad_basis
+        
+        # Compute Lagrange basis and derivatives where nodes = quadrature points
+        _, lagrange_basis_derivatives_quad = \
+            LagrangeShapeFunctions.lagrange_basis_and_derivatives(
+                x_node=self.quadrature_nodes_reshaped,  # Basis nodes = quadrature points
+                x_eval=self.quadrature_nodes_reshaped,   # Evaluate at quadrature points
+            )
+        
+        derivative_matrix = lagrange_basis_derivatives_quad  # (n_elem, n_quad, n_quad)
+        
+        self._derivative_matrix_with_quadrature_basis = derivative_matrix
+
         return derivative_matrix
+
+
+    def get_derivative_matrix_with_physical_basis(self) -> np.ndarray:
+        """
+        Compute derivative matrix where basis function nodes = physical nodes.
+        """
+        if hasattr(self, "_derivative_matrix_with_physical_basis"):
+            return self._derivative_matrix_with_physical_basis
+        
+        _, lagrange_basis_derivatives_physical = \
+            LagrangeShapeFunctions.lagrange_basis_and_derivatives(
+                x_node=self.physical_nodes_reshaped,
+                x_eval=self.physical_nodes_reshaped,
+            )
+        
+        # Store the derivative matrix with physical basis
+        self._derivative_matrix_with_physical_basis = lagrange_basis_derivatives_physical
+        return lagrange_basis_derivatives_physical
+
 
 
     def get_global_interpolation_matrix(self) -> np.ndarray:
@@ -655,9 +814,9 @@ class RadialOperatorsBuilder:
         if hasattr(self, "_global_interpolation_matrix"):
             return self._global_interpolation_matrix
         
-        n_elem = self.number_of_finite_elements
-        n_quad = self.quadrature_node_number
-        n_local = self.physical_node_number
+        n_elem   = self.finite_element_number
+        n_quad   = self.quadrature_node_number
+        n_local  = self.physical_node_number
         n_global = n_elem * (self.physical_node_number - 1) + 1
         
         # Method: Build block-diagonal then remove duplicate columns
@@ -683,13 +842,32 @@ class RadialOperatorsBuilder:
         interp_matrix = np.delete(interp_matrix, shared_cols + 1, axis=1)
         
         assert interp_matrix.shape == (n_elem * n_quad, n_global), \
-            f"Shape mismatch: expected {(n_elem * n_quad, n_global)}, got {interp_matrix.shape}"
+            f"Shape mismatch: expected {(n_elem * n_quad, n_global)}, get {interp_matrix.shape}."
         
         self._global_interpolation_matrix = interp_matrix
         return interp_matrix
 
 
-    def assemble_poisson_rhs_vector(self, rho: np.ndarray, z_nuclear: float) -> np.ndarray:
+    def get_lagrange_basis_pseudoinverse(self) -> np.ndarray:
+        """
+        Compute the pseudoinverse of the Lagrange basis for each finite element.
+        """
+        if hasattr(self, "_lagrange_basis_pseudoinverse"):
+            return self._lagrange_basis_pseudoinverse
+        
+        lagrange_basis_pseudoinverse = np.zeros(
+            (self.finite_element_number, self.physical_node_number, self.quadrature_node_number)
+        )
+        for elem_idx in range(self.finite_element_number):
+            lagrange_basis_pseudoinverse[elem_idx, :, :] = np.linalg.pinv(self.lagrange_basis[elem_idx])
+
+        self._lagrange_basis_pseudoinverse = lagrange_basis_pseudoinverse
+
+        return lagrange_basis_pseudoinverse
+
+
+
+    def assemble_poisson_rhs_vector_no_bc(self, rho: np.ndarray) -> np.ndarray:
         """
         Assemble the right-hand side vector for the Poisson equation.
         
@@ -701,8 +879,6 @@ class RadialOperatorsBuilder:
         rho : np.ndarray
             Electron density at quadrature points
             Shape: (n_elements * n_quad_points,)
-        z_nuclear : float
-            Nuclear charge (used for boundary condition)
         
         Returns
         -------
@@ -725,13 +901,10 @@ class RadialOperatorsBuilder:
             RHO_TYPE_ERROR_MESSAGE.format(type(rho))
         assert rho.ndim == 1, \
             RHO_NDIM_ERROR_MESSAGE.format(rho.ndim)
-        assert rho.shape[0] == self.number_of_finite_elements * self.quadrature_node_number, \
-            RHO_SHAPE_ERROR_MESSAGE.format(rho.shape[0], self.number_of_finite_elements * self.quadrature_node_number)
-        assert isinstance(z_nuclear, float), \
-            Z_NUCLEAR_NOT_FLOAT_ERROR.format(type(z_nuclear))
-
+        assert rho.shape[0] == self.finite_element_number * self.quadrature_node_number, \
+            RHO_SHAPE_ERROR_MESSAGE.format(rho.shape[0], self.finite_element_number * self.quadrature_node_number)
         # Reshape density to element-wise structure
-        rho_reshaped = rho.reshape(self.number_of_finite_elements, self.quadrature_node_number)
+        rho_reshaped = rho.reshape(self.finite_element_number, self.quadrature_node_number)
         
         # Compute source term at quadrature points: -4πrρ
         r_rho = self.quadrature_nodes_reshaped * rho_reshaped
@@ -749,6 +922,97 @@ class RadialOperatorsBuilder:
 
         # Assemble local vectors into global vector
         # Shared boundary nodes will have contributions from adjacent elements added
+        rhs_vector = self._assemble_local_to_global_vector(rhs_vector_local)
+
+        return rhs_vector
+
+
+
+
+    def assemble_laplacian_rhs_vector_with_gradient_and_no_bc(self, grad_rho: np.ndarray) -> np.ndarray:
+        """
+        Assemble the right-hand side vector for the Laplacian weak form.
+        
+        Weak form (integration by parts on [0, R]):
+            ∫₀^R φ_i ℓ r² dr = -∫₀^R φ_i' r² ρ' dr + [φ_i(r) r² ρ'(r)]₀^R
+        where ℓ = ∇²ρ (Laplacian of density), φ_i are test functions, ρ' = dρ/dr.
+        
+        This method implements only the first term on the RHS (the integral with
+        negative sign): -∫₀^R φ_i' r² ρ' dr. The boundary term is handled elsewhere.
+        
+        Parameters
+        ----------
+        grad_rho : np.ndarray
+            Radial derivative of density ρ' = dρ/dr at quadrature points.
+        """
+        # Type and shape validation
+        assert isinstance(grad_rho, np.ndarray), \
+            GRAD_RHO_TYPE_ERROR_MESSAGE.format(type(grad_rho))
+        assert grad_rho.ndim == 1, \
+            GRAD_RHO_NDIM_ERROR_MESSAGE.format(grad_rho.ndim)
+        assert grad_rho.shape[0] == self.finite_element_number * self.quadrature_node_number, \
+            GRAD_RHO_SHAPE_ERROR_MESSAGE.format(grad_rho.shape[0], self.finite_element_number * self.quadrature_node_number)
+        
+        # Reshape gradient of density to element-wise structure
+        grad_rho_reshaped = grad_rho.reshape(self.finite_element_number, self.quadrature_node_number)
+
+        # Compute source term at quadrature points: - r² ρ'
+        source = - self.quadrature_nodes_reshaped ** 2 * grad_rho_reshaped
+
+        # Compute local RHS: ∫ φ_i(r) * source(r) dr
+        rhs_vector_local = np.einsum(
+            "emi,em,em->ei",
+            self.lagrange_basis_derivatives,  # φ_i' at quadrature points
+            self.quadrature_weights_reshaped, # quadrature weights
+            source,                           # - r² ρ' at quadrature points
+            optimize=True
+        )  # Shape: (n_elem, n_physical_nodes)
+
+        # Assemble local vectors into global vector
+        # Shared boundary nodes will have contributions from adjacent elements added
+        rhs_vector = self._assemble_local_to_global_vector(rhs_vector_local)
+
+        return rhs_vector
+
+
+    def assemble_laplacian_rhs_vector_with_rho_and_no_bc(self, rho: np.ndarray) -> np.ndarray:
+        """
+        Assemble the right-hand side vector for the Laplacian weaker form.
+
+        Weaker form (integration by parts on [0, R]):
+            ∫₀^R φ_i ℓ r² dr = ∫₀^R (r² φ_i')' ρ dr - [r² φ_i'(r) ρ(r)]₀^R + [r² φ_i(r) ρ'(r)]₀^R
+        where ℓ = ∇²ρ (Laplacian of density), φ_i are test functions, ρ' = dρ/dr.
+
+        Uses (r² φ_i')' = 2r φ_i' + r² φ_i'' at quadrature points.
+
+        Parameters
+        ----------
+        rho : np.ndarray
+            Electron density at quadrature points.
+        grad_rho : np.ndarray
+            Radial derivative of density ρ' = dρ/dr at quadrature points.
+        """
+        # check if the input parameters are valid
+        assert isinstance(rho, np.ndarray), \
+            RHO_TYPE_ERROR_MESSAGE.format(type(rho))
+        assert rho.ndim == 1, \
+            RHO_NDIM_ERROR_MESSAGE.format(rho.ndim)
+        assert rho.shape[0] == self.finite_element_number * self.quadrature_node_number, \
+            RHO_SHAPE_ERROR_MESSAGE.format(rho.shape[0], self.finite_element_number * self.quadrature_node_number)
+
+        # Reshape density to element-wise structure
+        rho_reshaped = rho.reshape(self.finite_element_number, self.quadrature_node_number)
+
+        # Compute local RHS: ∫ φ_i(r) * source(r) dr
+        rhs_vector_local = np.einsum(
+            "em, eml, el, eli -> ei",
+            self.quadrature_weights_reshaped * rho_reshaped,  # (n_elements, n_quad)
+            self.derivative_matrix,                           # (n_elements, n_quad, n_quad)
+            self.quadrature_nodes_reshaped ** 2,              # (n_elements, n_quad)
+            self.lagrange_basis_derivatives,                  # (n_elements, n_quad, n_physical_nodes)
+            optimize=True
+        )
+
         rhs_vector = self._assemble_local_to_global_vector(rhs_vector_local)
 
         return rhs_vector
@@ -787,15 +1051,15 @@ class RadialOperatorsBuilder:
         Global vector: [a0, a1, a2+b0, b1, b2+c0, c1, c2]
         """
         # Initialize global vector
-        global_size = self.number_of_finite_elements * (self.physical_node_number - 1) + 1
-        global_vector = np.zeros(global_size)
+        global_size = self.finite_element_number * (self.physical_node_number - 1) + 1
+        global_vector = np.zeros(global_size, dtype=self.assembly_dtype)
         
         # Get assembly indices (mapping from local to global DOFs)
         indices_global = self._build_assembly_indices_vector()
         
         # Assemble: add local contributions to global vector
         # np.add.at handles accumulation at repeated indices automatically
-        np.add.at(global_vector, indices_global, local_vector.reshape(-1))
+        np.add.at(global_vector, indices_global, np.asarray(local_vector, dtype=self.assembly_dtype).reshape(-1))
         
         return global_vector
 
@@ -825,14 +1089,18 @@ class RadialOperatorsBuilder:
         accumulating contributions from all elements that share a degree of freedom.
         """
         # Initialize global matrix
-        global_size = self.number_of_finite_elements * (self.physical_node_number - 1) + 1
-        global_matrix = np.zeros((global_size, global_size))
+        global_size = self.finite_element_number * (self.physical_node_number - 1) + 1
+        global_matrix = np.zeros((global_size, global_size), dtype=self.assembly_dtype)
         
         # Get assembly indices (mapping from local to global DOFs)
         rows_global, cols_global = self._build_assembly_indices()
         
         # Assemble: add local contributions to global matrix
-        np.add.at(global_matrix, (rows_global, cols_global), local_matrix.reshape(-1))
+        np.add.at(
+            global_matrix,
+            (rows_global, cols_global),
+            np.asarray(local_matrix, dtype=self.assembly_dtype).reshape(-1),
+        )
         
         return global_matrix
     
@@ -868,7 +1136,7 @@ class RadialOperatorsBuilder:
         
         Note the repeated indices (2, 2) and (4, 4) at element boundaries.
         """
-        N_elem = self.number_of_finite_elements  # e for element
+        N_elem = self.finite_element_number  # e for element
         N_grid = self.physical_node_number       # g for grid
 
         # compute the assembly indices
@@ -912,6 +1180,35 @@ class RadialOperatorsBuilder:
         return rows_primary, cols_primary
 
 
+    def _build_basis_on_arbitrary_grid_dict(self, given_grid: np.ndarray) -> Dict[int, np.ndarray]:
+        """
+        Evaluate Lagrange basis functions on arbitrary grid points, per element.
+
+        Only elements that contain at least one point in ``given_grid`` appear in the
+        returned dict (coarse uniform meshes may leave many elements out).
+
+        Returns
+        -------
+        dict[int, np.ndarray]
+            Keys are finite-element indices. Values have shape (1, n_points_in_element, n_basis).
+        """
+
+        # Internal helper: callers validate ``given_grid`` before calling.
+        basis_on_arbitrary_grid_dict: Dict[int, np.ndarray] = {}
+        for elem_idx in range(self.finite_element_number):
+            idx_uniform = (
+                (given_grid >= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, 0])
+                & (given_grid <= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, -1])
+            )
+            if not np.any(idx_uniform):
+                continue
+            basis_func_in_current_element, _ = LagrangeShapeFunctions.lagrange_basis_and_derivatives(
+                x_node = self.physical_nodes_reshaped[elem_idx:elem_idx + 1, :],
+                x_eval = given_grid[idx_uniform],
+            )
+            basis_on_arbitrary_grid_dict[elem_idx] = basis_func_in_current_element
+        return basis_on_arbitrary_grid_dict
+
 
     @property
     def H_kinetic(self) -> np.ndarray:
@@ -935,7 +1232,13 @@ class RadialOperatorsBuilder:
 
     @property
     def derivative_matrix(self) -> np.ndarray:
-        return self.get_derivative_matrix()
+        # return self.get_derivative_matrix()
+        # Now using the quadrature basis as the basis nodes
+        return self.get_derivative_matrix_with_quadrature_basis()
+        
+    @property
+    def derivative_matrix_with_quadrature_basis(self) -> np.ndarray:
+        return self.get_derivative_matrix_with_quadrature_basis()
 
     @property
     def global_interpolation_matrix(self) -> np.ndarray:
@@ -944,17 +1247,175 @@ class RadialOperatorsBuilder:
         Used for HF/PBE0 calculations.
         """
         return self.get_global_interpolation_matrix()
+    
+    @property
+    def lagrange_basis_pseudoinverse(self) -> np.ndarray:
+        return self.get_lagrange_basis_pseudoinverse()
 
 
-    def evaluate_single_orbital_on_given_grid(
-        self,
-        given_grid: np.ndarray,
-        orbital   : np.ndarray, 
-        ) -> np.ndarray:
+
+    @property
+    def grid_data(self) -> GridData:
         """
-        Evaluate a single orbital on a given grid using Lagrange interpolation.
+        Property accessor for grid data.
+        Used for response function calculation, etc.
+        """
+        return GridData(
+            finite_element_number = self.finite_element_number,
+            physical_nodes        = self.physical_nodes,
+            quadrature_nodes      = self.quadrature_nodes,
+            quadrature_weights    = self.quadrature_weights,
+        )
+
+
+    def evaluate_orbitals_on_arbitrary_grid(
+        self,
+        given_grid                   : np.ndarray,
+        orbital_coefficients         : np.ndarray,
+        basis_on_arbitrary_grid_dict : Optional[Dict[int, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """
+        Interpolate FE nodal orbital coefficients onto an arbitrary grid.
+
+        Use when SCF eigenvectors are stored as global FE node coefficients
+        (``symmetrize=False`` path). For quadrature-point orbitals, use
+        ``evaluate_quantites_on_arbitrary_grid`` instead.
+
+        Parameters
+        ----------
+        given_grid : np.ndarray, shape (n_points,)
+            Monotonically increasing points within the physical domain.
+        orbital_coefficients : np.ndarray
+            Shape ``(n_global_fe_dofs - 1, n_orbitals)`` before internal padding.
+        basis_on_arbitrary_grid_dict : dict[int, np.ndarray], optional
+            Precomputed basis from ``_build_basis_on_arbitrary_grid_dict``.
+
+        Returns
+        -------
+        np.ndarray, shape (n_points, n_orbitals)
+            Orbitals sampled on ``given_grid``.
+        """
+        # Validate input: grid must be monotonically increasing
+        assert np.all(np.diff(given_grid) > 0.0), \
+            GIVEN_GRID_NOT_MONOTONICALLY_INCREASING_ERROR
+
+        # Validate input: grid must be within physical domain
+        assert np.all(given_grid >= self.physical_nodes[0]) and \
+               np.all(given_grid <= self.physical_nodes[-1]), \
+            GIVEN_GRID_NOT_WITHIN_PHYSICAL_NODES_ERROR
+            
+        # Validate input: FE nodal coefficients (unpadded global dof count)
+        assert orbital_coefficients.shape[0] == (self.finite_element_number * (self.physical_node_number - 1) - 1), \
+            ORBITAL_COEFFICIENTS_SHAPE_ERROR_MESSAGE.format(orbital_coefficients.shape[0], (self.finite_element_number * (self.physical_node_number - 1) - 1))
+
+        if basis_on_arbitrary_grid_dict is None:
+            basis_on_arbitrary_grid_dict = self._build_basis_on_arbitrary_grid_dict(given_grid)
+
+
+        orbital_coefficients = np.pad(orbital_coefficients, ((1, 1), (0, 0)))
+        n_elem = self.finite_element_number
+        n_basis = self.physical_node_number
+
+        orbitals_arbitrary_grid = np.zeros((len(given_grid), orbital_coefficients.shape[1]))
+        for elem_idx in range(n_elem):
+            idx_FE = np.arange(elem_idx * (n_basis - 1), (elem_idx + 1) * (n_basis - 1) + 1)
+            idx_uniform = (
+                (given_grid >= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, 0])
+                & (given_grid <= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, -1])
+            )
+            if not np.any(idx_uniform):
+                continue
+            orbitals_arbitrary_grid[idx_uniform, :] = (
+                basis_on_arbitrary_grid_dict[elem_idx][0, :, :] @ orbital_coefficients[idx_FE, :]
+            )
+        return orbitals_arbitrary_grid
+
+
+    def evaluate_quantites_on_arbitrary_grid(
+        self,
+        given_grid                   : np.ndarray,
+        field_values                 : np.ndarray,
+        basis_on_arbitrary_grid_dict : Optional[Dict[int, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """
+        Evaluate quadrature-point fields on an arbitrary grid.
+
+        For each finite element, quadrature values are mapped to nodal coefficients
+        via the cached Lagrange-basis pseudoinverse, then interpolated to
+        ``given_grid`` using precomputed basis values on that grid.
+
+        Parameters
+        ----------
+        given_grid : np.ndarray, shape (n_points,)
+            Monotonically increasing evaluation points within the physical domain.
+        field_values : np.ndarray, shape (n_elem * n_quad, n_fields)
+            Field values at global quadrature points. Use ``field[:, None]`` for a
+            single field.
+        basis_on_arbitrary_grid_dict : dict[int, np.ndarray], optional
+            Precomputed Lagrange basis on ``given_grid``, keyed by element index.
+            Each value has shape ``(1, n_points_in_element, n_basis)``.
+            If ``None``, the basis is built internally for this call.
+            Pass the dict from ``_build_basis_on_arbitrary_grid_dict`` to avoid
+            rebuilding when evaluating multiple fields on the same grid.
+
+        Returns
+        -------
+        np.ndarray, shape (n_points, n_fields)
+            Field values interpolated onto ``given_grid``.
+        """
+        # Validate input: grid must be monotonically increasing
+        assert np.all(np.diff(given_grid) > 0.0), \
+            GIVEN_GRID_NOT_MONOTONICALLY_INCREASING_ERROR
+
+        # Validate input: grid must be within physical domain
+        assert np.all(given_grid >= self.physical_nodes[0]) and \
+               np.all(given_grid <= self.physical_nodes[-1]), \
+            GIVEN_GRID_NOT_WITHIN_PHYSICAL_NODES_ERROR
         
-        This function takes an orbital represented by its values at quadrature
+        # Validate input: field values must be a 1D or 2D array with shape (n_elem * n_quad, n_fields)
+        if field_values.ndim == 1:
+            field_values = field_values[:, None]
+        assert field_values.ndim == 2, \
+            FIELD_VALUES_2D_NDIM_ERROR_MESSAGE.format(field_values.ndim)
+        assert field_values.shape[0] == self.finite_element_number * self.quadrature_node_number, \
+            FIELD_VALUES_SHAPE_ERROR_MESSAGE.format(field_values.shape[0], self.finite_element_number * self.quadrature_node_number,)
+
+        n_elem = self.finite_element_number
+        n_quad = self.quadrature_node_number
+        basis_pseudoinverse = self.lagrange_basis_pseudoinverse
+
+        if basis_on_arbitrary_grid_dict is None:
+            basis_on_arbitrary_grid_dict = self._build_basis_on_arbitrary_grid_dict(given_grid)
+
+        quantities_arbitrary_grid = np.zeros((len(given_grid), field_values.shape[1]))
+        for elem_idx in range(n_elem):
+            idx_uniform = (
+                (given_grid >= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, 0])
+                & (given_grid <= self.physical_nodes_reshaped[elem_idx:elem_idx + 1, -1])
+            )
+            if not np.any(idx_uniform):
+                continue
+            field_values_coeffs_from_pseudoinverse = (
+                basis_pseudoinverse[elem_idx, :, :]
+                @ field_values[elem_idx * n_quad:(elem_idx + 1) * n_quad, :]
+            )
+            quantities_arbitrary_grid[idx_uniform, :] = (
+                basis_on_arbitrary_grid_dict[elem_idx] @ field_values_coeffs_from_pseudoinverse
+            )
+
+        return quantities_arbitrary_grid
+
+
+    def evaluate_single_field_on_grid(
+        self,
+        given_grid                   : np.ndarray,
+        field_values                 : np.ndarray,
+        basis_on_arbitrary_grid_dict : Optional[Dict[int, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """
+        Evaluate a single field on a given grid using Lagrange interpolation.
+        
+        This function takes a field represented by its values at quadrature
         points and evaluates it at arbitrary grid points using finite element
         Lagrange basis functions. For each grid point, the function:
         1. Identifies which finite element contains the point
@@ -965,154 +1426,93 @@ class RadialOperatorsBuilder:
         Parameters
         ----------
         given_grid : np.ndarray, shape (n_points,)
-            Grid points where the orbital should be evaluated.
+            Grid points where the field should be evaluated.
             Must be monotonically increasing and within the physical domain.
-        orbital : np.ndarray, shape (n_elem * n_quad,)
-            Orbital values at quadrature points (global quadrature points).
-            The orbital is stored as: ψ[r_quad] where r_quad are quadrature nodes.
-        
+        field_values : np.ndarray, shape (n_elem * n_quad,)
+            Field values at global quadrature points.
+        basis_on_arbitrary_grid_dict : dict[int, np.ndarray], optional
+            Precomputed basis from ``_build_basis_on_arbitrary_grid_dict``.
+            Reuse when mapping several fields onto the same ``given_grid``.
+
         Returns
         -------
-        orbital_values : np.ndarray, shape (n_points,)
-            Orbital values evaluated at the given grid points.
-            orbital_values[i] = ψ(given_grid[i])
-        
-        Implementation Logic
-        --------------------
-        1. **Input validation**:
-           - Grid must be monotonically increasing
-           - Grid must be within physical domain bounds
-           - Orbital must be 1D array with shape (n_elem * n_quad,)
-        
-        2. **Reshape orbital to element structure**:
-           - Global orbital: (n_elem * n_quad,) → Element-wise: (n_elem, n_quad)
-           - Each row contains the orbital values at quadrature points for one element
-        
-        3. **For each element, compute pseudoinverse of Lagrange basis**:
-           - lagrange_basis[elem_idx] has shape (n_quad, n_basis)
-           - basis_pseudoinverse[elem_idx] maps quadrature values → nodal coefficients
-        
-        4. **For each grid point**:
-           a. Find which element contains the point (using element boundaries)
-           b. Convert quadrature values to nodal coefficients: c_nodal = L⁺ @ ψ_quad
-           c. Evaluate Lagrange basis functions at that point
-           d. Compute orbital value: ψ(x) = Σᵢ c_nodal_i * Lᵢ(x)
-        
-        5. **Handle boundary nodes**:
-           - Boundary nodes are shared between adjacent elements
-           - Use the element that naturally contains the point
-           - For the last element, include the right boundary point
-        
+        field_on_grid : np.ndarray, shape (n_points,)
+            Field values on ``given_grid``.
+
         Notes
         -----
-        - The orbital input is at quadrature points, not physical nodes.
-        - The interpolation uses Lagrange basis functions defined at physical nodes.
-        - The conversion from quadrature points to nodal coefficients uses the
-          pseudoinverse of the Lagrange basis matrix.
-        - Points outside the domain are not allowed (will raise assertion error).
+        Delegates to ``evaluate_quantites_on_arbitrary_grid`` (vectorized per
+        element). Input is quadrature-point data, not FE nodal coefficients.
         
         Example
         -------
-        >>> # Given orbital values at quadrature points
-        >>> orbital = np.array([...])  # shape: (n_elem * n_quad,)
+        >>> # Given field values at quadrature points
+        >>> field_values = np.array([...])  # shape: (n_elem * n_quad,)
         >>> # Evaluate on a uniform grid
         >>> uniform_grid = np.linspace(0, domain_size, 1000)
-        >>> orbital_values = ops_builder.evaluate_single_orbital_on_given_grid(
+        >>> field_on_grid = ops_builder.evaluate_single_field_on_grid(
         ...     given_grid=uniform_grid,
-        ...     orbital=orbital
+        ...     field_values=field_values
         ... )
-        >>> # orbital_values.shape = (1000,)
+        >>> # field_on_grid.shape = (1000,)
         """
-        # Validate input: grid must be monotonically increasing
-        assert np.all(np.diff(given_grid) > 0.0), \
-            GIVEN_GRID_NOT_MONOTONICALLY_INCREASING_ERROR
+        # Validate input: field values must be a 1D array with shape (n_elem * n_quad,)
+        assert field_values.ndim == 1, \
+            FIELD_VALUES_NDIM_ERROR_MESSAGE.format(field_values.ndim)
+        assert field_values.shape[0] == self.finite_element_number * self.quadrature_node_number, \
+            FIELD_VALUES_SHAPE_ERROR_MESSAGE.format(field_values.shape[0], self.finite_element_number * self.quadrature_node_number,)
+        
+        return self.evaluate_quantites_on_arbitrary_grid(
+            given_grid                   = given_grid,
+            field_values                 = field_values,
+            basis_on_arbitrary_grid_dict = basis_on_arbitrary_grid_dict,
+        ).reshape(-1)
 
-        # Validate input: grid must be within physical domain
-        assert np.all(given_grid >= self.physical_nodes[0]) and \
-               np.all(given_grid <= self.physical_nodes[-1]), \
-            GIVEN_GRID_NOT_WITHIN_PHYSICAL_NODES_ERROR
 
-        # Validate input: orbital must be 1D array with correct shape
-        assert orbital.ndim == 1, \
-            ORBITAL_NDIM_ERROR_MESSAGE.format(orbital.ndim)
-        assert orbital.shape[0] == self.number_of_finite_elements * self.quadrature_node_number, \
-            ORBITAL_SHAPE_ERROR_MESSAGE.format(
-                orbital.shape[0], 
-                self.number_of_finite_elements * self.quadrature_node_number
+
+    @staticmethod
+    def build_cubic_spline_derivative_matrix(
+        r                : np.ndarray,
+        left_derivative  : float = 0.0,
+        right_derivative : float = 0.0,
+    ) -> np.ndarray:
+        """
+        Build a 2D derivative matrix for a 1D cubic spline on ``r``.
+
+        For grid values ``f`` on ``r``, ``D @ f`` gives ``df/dr`` at each grid point,
+        where ``D[i, j] = ∂f/∂f_j`` evaluated at ``r_i``. The spline uses clamped
+        boundary conditions ``f'(r_0) = left_derivative`` and
+        ``f'(r_{n-1}) = right_derivative`` (default: zero slope at both ends).
+
+        Parameters
+        ----------
+        r : np.ndarray
+            Strictly increasing 1D radial grid, shape ``(n,)``.
+        left_derivative, right_derivative : float
+            First-derivative boundary values at the left and right endpoints.
+
+        Returns
+        -------
+        np.ndarray
+            Shape ``(n, n)``, ``float64``.
+        """
+        from scipy.interpolate import CubicSpline
+
+        r = np.asarray(r, dtype=np.float64).reshape(-1)
+        n = r.size
+        if n < 2:
+            raise ValueError(
+                "build_cubic_spline_derivative_matrix requires at least 2 grid points, "
+                f"got {n}."
             )
+        if not np.all(np.diff(r) > 0.0):
+            raise ValueError("Grid r must be strictly increasing.")
 
-        n_elem = self.number_of_finite_elements
-        n_quad = self.quadrature_node_number
-        n_basis = self.physical_node_number
-        n_points = len(given_grid)
-        
-        # Reshape orbital from global quadrature points to element-wise structure
-        # Shape: (n_elem * n_quad,) -> (n_elem, n_quad)
-        # Each row contains the orbital values at quadrature points for one element
-        orbital_reshaped = orbital.reshape(n_elem, n_quad)
-        
-        # Compute pseudoinverse of Lagrange basis for each element
-        # This maps quadrature point values to nodal coefficients
-        # basis_pseudoinverse[elem_idx] has shape (n_basis, n_quad)
-        basis_pseudoinverse = np.zeros((n_elem, n_basis, n_quad))
-        for elem_idx in range(n_elem):
-            # self.lagrange_basis[elem_idx] has shape (n_quad, n_basis)
-            # Pseudoinverse maps: ψ_quad → c_nodal
-            basis_pseudoinverse[elem_idx] = np.linalg.pinv(self.lagrange_basis[elem_idx])
-        
-        # Get element boundaries from physical nodes
-        boundaries = np.zeros(n_elem + 1)
-        boundaries[0] = self.physical_nodes_reshaped[0, 0]
-        for elem_idx in range(n_elem):
-            boundaries[elem_idx + 1] = self.physical_nodes_reshaped[elem_idx, -1]
-        
-        # Initialize output array
-        orbital_values = np.zeros(n_points)
-        
-        # For each grid point, find its element and evaluate the orbital
-        for point_idx, x_point in enumerate(given_grid):
-            # Find which element contains this point
-            # For the last element, include the right boundary
-            elem_idx = None
-            for e_idx in range(n_elem):
-                left = boundaries[e_idx]
-                right = boundaries[e_idx + 1]
-                if e_idx == n_elem - 1:
-                    # Last element: include right boundary
-                    if left <= x_point <= right:
-                        elem_idx = e_idx
-                        break
-                else:
-                    # Other elements: exclude right boundary (handled by next element)
-                    if left <= x_point < right:
-                        elem_idx = e_idx
-                        break
-            
-            if elem_idx is None:
-                # This should not happen if assertions passed, but handle gracefully
-                raise ValueError(f"Point {x_point} not found in any element")
-            
-            # Get orbital values at quadrature points for this element
-            orbital_quad_elem = orbital_reshaped[elem_idx, :]  # Shape: (n_quad,)
-            
-            # Convert quadrature point values to nodal coefficients
-            # c_nodal = L⁺ @ ψ_quad, where L⁺ is the pseudoinverse
-            orbital_coef_nodal = basis_pseudoinverse[elem_idx] @ orbital_quad_elem  # Shape: (n_basis,)
-            
-            # Get physical nodes for this element (as row vector for LagrangeShapeFunctions)
-            nodes_elem = self.physical_nodes_reshaped[elem_idx:elem_idx+1, :]  # Shape: (1, n_basis)
-            
-            # Evaluate Lagrange basis functions at this point
-            # x_eval should be (1, 1) for single point
-            basis_elem, _ = LagrangeShapeFunctions.lagrange_basis_and_derivatives(
-                x_node=nodes_elem,           # (1, n_basis)
-                x_eval=np.array([[x_point]])  # (1, 1)
-            )
-            # basis_elem shape: (1, 1, n_basis) -> (n_basis,)
-            basis_values = basis_elem[0, 0, :]
-            
-            # Compute orbital value: ψ(x) = Σᵢ c_nodal_i * Lᵢ(x)
-            orbital_values[point_idx] = np.dot(orbital_coef_nodal, basis_values)
-
-        return orbital_values
+        bc_type = ((1, float(left_derivative)), (1, float(right_derivative)))
+        D = np.zeros((n, n), dtype=np.float64)
+        eye = np.eye(n, dtype=np.float64)
+        for j in range(n):
+            spline = CubicSpline(r, eye[:, j], bc_type=bc_type)
+            D[:, j] = spline(r, nu=1)
+        return D
 

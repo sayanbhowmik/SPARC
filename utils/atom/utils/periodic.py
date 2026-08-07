@@ -1,4 +1,134 @@
-def atomic_number_to_name(atomic_number):
+
+# error messages
+ATOMIC_NUMBER_NOT_INTEGER_ERROR = \
+    "Atomic number must be an integer, get type {} instead."
+ATOMIC_NUMBER_NOT_SUPPORTED_ERROR = \
+    "Atomic number {} is not supported. Please use an integer between 1 and 93."
+ATOM_NAME_NOT_STRING_ERROR = \
+    "Atom name must be a string, get type {} instead."
+ATOM_NAME_NOT_SUPPORTED_ERROR = \
+    "Atom named '{}' is not supported."
+
+
+# Common oxidation states (valences) for each element
+# Values are lists of common oxidation states, ordered by frequency/importance
+# Note: For charged systems, n_electrons = z_nuclear - oxidation_state
+COMMON_OXIDATION_STATES = {
+    1:  [1, -1, 0],               # H: +1 (most common), -1 (hydride), 0 (neutral)
+    2:  [0],                      # He: 0 (noble gas, rarely forms compounds)
+    3:  [1, 0],                   # Li: +1, 0
+    4:  [2, 0],                   # Be: +2, 0
+    5:  [3, 0],                   # B: +3, 0
+    6:  [4, 2, -4, 0],            # C: +4, +2, -4, 0
+    7:  [3, 5, -3, 0],            # N: +3, +5, -3, 0
+    8:  [-2, 0],                  # O: -2, 0
+    9:  [-1, 0],                  # F: -1, 0
+    10: [0],                      # Ne: 0
+    11: [1, 0],                   # Na: +1, 0
+    12: [2, 0],                   # Mg: +2, 0
+    13: [3, 0],                   # Al: +3, 0
+    14: [4, 2, -4, 0],            # Si: +4, +2, -4, 0
+    15: [5, 3, -3, 0],            # P: +5, +3, -3, 0
+    16: [6, 4, 2, -2, 0],         # S: +6, +4, +2, -2, 0
+    17: [7, 5, 3, 1, -1, 0],      # Cl: +7, +5, +3, +1, -1, 0
+    18: [0],                      # Ar: 0
+    19: [1, 0],                   # K: +1, 0
+    20: [2, 0],                   # Ca: +2, 0
+    21: [3, 2, 0],                # Sc: +3, +2, 0
+    22: [4, 3, 2, 0],             # Ti: +4, +3, +2, 0
+    23: [5, 4, 3, 2, 0],          # V: +5, +4, +3, +2, 0
+    24: [6, 3, 2, 0],             # Cr: +6, +3, +2, 0
+    25: [7, 6, 4, 3, 2, 0],       # Mn: +7, +6, +4, +3, +2, 0
+    26: [3, 2, 0],                # Fe: +3, +2, 0
+    27: [3, 2, 0],                # Co: +3, +2, 0
+    28: [2, 3, 0],                # Ni: +2, +3, 0
+    29: [2, 1, 0],                # Cu: +2, +1, 0
+    30: [2, 0],                   # Zn: +2, 0
+    31: [3, 1, 0],                # Ga: +3, +1, 0
+    32: [4, 2, 0],                # Ge: +4, +2, 0
+    33: [5, 3, -3, 0],            # As: +5, +3, -3, 0
+    34: [6, 4, 2, -2, 0],         # Se: +6, +4, +2, -2, 0
+    35: [7, 5, 3, 1, -1, 0],      # Br: +7, +5, +3, +1, -1, 0
+    36: [0, 2],                   # Kr: 0, +2 (rare)
+    37: [1, 0],                   # Rb: +1, 0
+    38: [2, 0],                   # Sr: +2, 0
+    39: [3, 0],                   # Y: +3, 0
+    40: [4, 0],                   # Zr: +4, 0
+    41: [5, 4, 3, 0],             # Nb: +5, +4, +3, 0
+    42: [6, 5, 4, 3, 0],          # Mo: +6, +5, +4, +3, 0
+    43: [7, 6, 4, 0],             # Tc: +7, +6, +4, 0
+    44: [4, 3, 2, 0],             # Ru: +4, +3, +2, 0
+    45: [3, 4, 0],                # Rh: +3, +4, 0
+    46: [2, 4, 0],                # Pd: +2, +4, 0
+    47: [1, 2, 0],                # Ag: +1, +2, 0
+    48: [2, 0],                   # Cd: +2, 0
+    49: [3, 1, 0],                # In: +3, +1, 0
+    50: [4, 2, 0],                # Sn: +4, +2, 0
+    51: [5, 3, -3, 0],            # Sb: +5, +3, -3, 0
+    52: [6, 4, 2, -2, 0],         # Te: +6, +4, +2, -2, 0
+    53: [7, 5, 3, 1, -1, 0],      # I: +7, +5, +3, +1, -1, 0
+    54: [0, 2, 4, 6, 8],          # Xe: 0, +2, +4, +6, +8 (rare)
+    55: [1, 0],                   # Cs: +1, 0
+    56: [2, 0],                   # Ba: +2, 0
+    57: [3, 0],                   # La: +3, 0
+    58: [4, 3, 0],                # Ce: +4, +3, 0
+    59: [4, 3, 0],                # Pr: +4, +3, 0
+    60: [3, 0],                   # Nd: +3, 0
+    61: [3, 0],                   # Pm: +3, 0
+    62: [3, 2, 0],                # Sm: +3, +2, 0
+    63: [3, 2, 0],                # Eu: +3, +2, 0
+    64: [3, 0],                   # Gd: +3, 0
+    65: [4, 3, 0],                # Tb: +4, +3, 0
+    66: [3, 0],                   # Dy: +3, 0
+    67: [3, 0],                   # Ho: +3, 0
+    68: [3, 0],                   # Er: +3, 0
+    69: [3, 2, 0],                # Tm: +3, +2, 0
+    70: [3, 2, 0],                # Yb: +3, +2, 0
+    71: [3, 0],                   # Lu: +3, 0
+    72: [4, 0],                   # Hf: +4, 0
+    73: [5, 4, 0],                # Ta: +5, +4, 0
+    74: [6, 5, 4, 0],             # W: +6, +5, +4, 0
+    75: [7, 6, 5, 4, 0],          # Re: +7, +6, +5, +4, 0
+    76: [8, 6, 4, 3, 0],          # Os: +8, +6, +4, +3, 0
+    77: [4, 3, 0],                # Ir: +4, +3, 0
+    78: [4, 2, 0],                # Pt: +4, +2, 0
+    79: [3, 1, 0],                # Au: +3, +1, 0
+    80: [2, 1, 0],                # Hg: +2, +1, 0
+    81: [3, 1, 0],                # Tl: +3, +1, 0
+    82: [4, 2, 0],                # Pb: +4, +2, 0
+    83: [5, 3, 0],                # Bi: +5, +3, 0
+    84: [4, 2, -2, 0],            # Po: +4, +2, -2, 0
+    85: [5, 3, 1, -1, 0],         # At: +5, +3, +1, -1, 0
+    86: [0, 2, 4, 6],             # Rn: 0, +2, +4, +6 (rare)
+    87: [1, 0],                   # Fr: +1, 0
+    88: [2, 0],                   # Ra: +2, 0
+    89: [3, 0],                   # Ac: +3, 0
+    90: [4, 3, 0],                # Th: +4, +3, 0
+    91: [5, 4, 3, 0],             # Pa: +5, +4, +3, 0
+    92: [6, 5, 4, 3, 0],          # U: +6, +5, +4, +3, 0
+}
+
+
+def get_default_charged_dataset_atomic_number_and_n_electrons_list():
+    default_charged_dataset_atomic_number_list = []
+    default_charged_dataset_n_electrons_list = []
+    for atomic_number in range(1, 93):
+        for oxidation_state in COMMON_OXIDATION_STATES[atomic_number]:
+            n_electrons = atomic_number - oxidation_state
+            if n_electrons > 0:
+                default_charged_dataset_atomic_number_list.append(atomic_number)
+                default_charged_dataset_n_electrons_list.append(n_electrons)
+
+    return default_charged_dataset_atomic_number_list, default_charged_dataset_n_electrons_list
+
+
+
+
+
+def atomic_number_to_name(atomic_number: int) -> str:
+    assert isinstance(atomic_number, int), \
+        ATOMIC_NUMBER_NOT_INTEGER_ERROR.format(type(atomic_number))
+    
     if atomic_number == 1: return "H"
     elif atomic_number == 2: return "He"
     elif atomic_number == 3: return "Li"
@@ -93,10 +223,13 @@ def atomic_number_to_name(atomic_number):
     elif atomic_number == 92: return "U"
     elif atomic_number == 93: return "Np"
     else:
-        raise ValueError(f"Atomic number {atomic_number} is not supported")
+        raise ValueError(ATOMIC_NUMBER_NOT_SUPPORTED_ERROR.format(atomic_number))
 
 
-def name_to_atomic_number(name: str) -> int:
+def name_to_atomic_number(name: str) -> str:
+    assert isinstance(name, str), \
+        ATOM_NAME_NOT_STRING_ERROR.format(type(name))
+    
     if name == "H": return "01"
     elif name == "He": return "02"
     elif name == "Li": return "03"
@@ -191,5 +324,21 @@ def name_to_atomic_number(name: str) -> int:
     elif name == "U": return "92"
     elif name == "Np": return "93"
     else:
-        raise ValueError(f"Atomic number {name} is not supported")  
+        raise ValueError(ATOMIC_NUMBER_NOT_SUPPORTED_ERROR.format(name))
 
+
+
+if __name__ == "__main__":
+    print(get_default_charged_dataset_atomic_number_and_n_electrons_list())
+    # count the number charged neutal, charged positive, charged negative
+    charged_neutal = 0
+    charged_positive = 0
+    charged_negative = 0
+    for atomic_number, n_electrons in zip(get_default_charged_dataset_atomic_number_and_n_electrons_list()[0], get_default_charged_dataset_atomic_number_and_n_electrons_list()[1]):
+        if n_electrons- atomic_number == 0:
+            charged_neutal += 1
+        elif n_electrons- atomic_number > 0:
+            charged_positive += 1
+        elif n_electrons- atomic_number < 0:
+            charged_negative += 1
+    print(f"charged_neutal: {charged_neutal}, charged_positive: {charged_positive}, charged_negative: {charged_negative}")

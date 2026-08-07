@@ -74,11 +74,11 @@ def _get_rho_tau_and_sigma(density_data: DensityData) -> Tuple[np.ndarray, np.nd
     sigma    = grad_rho**2       # σ = |∇ρ|²
 
     if grad_rho is None or tau is None:
-        raise ValueError("rSCAN requires grad_rho and tau")
+        raise ValueError("rSCAN requires 'grad_rho' and 'tau'.")
     
-    # Avoid division by zero
-    rho[rho<1e-15] = 1e-15
-    sigma[sigma<1e-15] = 1e-15
+    # to avoid division by zero
+    rho[rho < 1e-16] = 1e-16
+    sigma[sigma < 1e-16] = 1e-16
 
     return rho, tau, sigma
     
@@ -443,7 +443,7 @@ class rSCAN(XCEvaluator):
     ):
         """Initialize rSCAN evaluator."""
         if derivative_matrix is None:
-            raise ValueError("rSCAN requires derivative_matrix")
+            raise ValueError("rSCAN requires 'derivative_matrix'.")
         super().__init__(derivative_matrix=derivative_matrix, r_quad=r_quad, params=params)
     
     def _default_params(self) -> rSCANParameters:
@@ -500,12 +500,6 @@ class rSCAN(XCEvaluator):
             self._rSCAN_correlation(rho, s, alpha, DsDn, DsDDn, DalphaDn, DalphaDDn, DalphaDtau)
 
         de_c_dsigma = de_c_dsigma / normDrho
-
-        # np.savetxt("v_c_generic.txt", v_c_generic)
-        # np.savetxt("ec.txt", ec)
-        # np.savetxt("de_c_dsigma.txt", de_c_dsigma)
-        # np.savetxt("de_c_dtau.txt", de_c_dtau)
-        # raise ValueError("Stop here")
 
         return GenericXCResult(
             v_generic = v_c_generic,
@@ -613,10 +607,17 @@ class rSCAN(XCEvaluator):
         alphaL0 = (alpha<0)
         fc = np.zeros((N_q))
         fc[alphaG25] = -dc*np.exp(c2c/(1-alpha[alphaG25]))
-        fc[alpha0To25] = 1 + (-0.64)*alpha[alpha0To25] + (-0.4352)*alpha[alpha0To25]**2 + (-1.535685604549)*alpha[alpha0To25]**3
-        + (3.061560252175)*alpha[alpha0To25]**4 + (-1.915710236206)*alpha[alpha0To25]**5 + 0.516884468372*alpha[alpha0To25]**6
-        + (-0.051848879792)*alpha[alpha0To25]**7
-        
+        fc[alpha0To25] = (
+            1
+            + (-0.64) * alpha[alpha0To25]
+            + (-0.4352) * alpha[alpha0To25] ** 2
+            + (-1.535685604549) * alpha[alpha0To25] ** 3
+            + (3.061560252175) * alpha[alpha0To25] ** 4
+            + (-1.915710236206) * alpha[alpha0To25] ** 5
+            + 0.516884468372 * alpha[alpha0To25] ** 6
+            + (-0.051848879792) * alpha[alpha0To25] ** 7
+        )
+
         fc[alphaL0] = np.exp(-c1c*alpha[alphaL0]/(1-alpha[alphaL0]))
         ec = ec1 + fc*(ec0-ec1)
         
@@ -654,9 +655,15 @@ class rSCAN(XCEvaluator):
         
         DfcDalpha = np.zeros((N_q))
         DfcDalpha[alphaG25] = fc[alphaG25]*(c2c/(1-alpha[alphaG25])**2)
-        DfcDalpha[alpha0To25] = (-0.64) + (-0.4352)*alpha[alpha0To25]*2 + (-1.535685604549)*alpha[alpha0To25]**2*3
-        +  3.061560252175*alpha[alpha0To25]**3*4 + (-1.915710236206)*alpha[alpha0To25]**4*5 + 0.516884468372*alpha[alpha0To25]**5*6
-        + (-0.051848879792)*alpha[alpha0To25]**6*7
+        DfcDalpha[alpha0To25] = (
+            (-0.64)
+            + (-0.4352) * alpha[alpha0To25] * 2
+            + (-1.535685604549) * alpha[alpha0To25] ** 2 * 3
+            + 3.061560252175 * alpha[alpha0To25] ** 3 * 4
+            + (-1.915710236206) * alpha[alpha0To25] ** 4 * 5
+            + 0.516884468372 * alpha[alpha0To25] ** 5 * 6
+            + (-0.051848879792) * alpha[alpha0To25] ** 6 * 7
+        )
 
         DfcDalpha[alphaL0] = fc[alphaL0]*(-c1c/(1-alpha[alphaL0])**2)
         DfcDn = DfcDalpha*DalphaDn
@@ -696,9 +703,16 @@ class rSCAN(XCEvaluator):
         alphaL0 =(alpha<0)
         fx = np.zeros((N_q))
         fx[alphaG25] = -dx*np.exp(c2x/(1-alpha[alphaG25]))
-        fx[alpha0To25] = 1 + (-0.667)*alpha[alpha0To25] + (-0.4445555)*alpha[alpha0To25]**2 + (-0.663086601049)*alpha[alpha0To25]**3
-        + 1.451297044490*alpha[alpha0To25]**4 + (-0.887998041597)*alpha[alpha0To25]**5 + 0.234528941479*alpha[alpha0To25]**6 
-        + (-0.023185843322)*alpha[alpha0To25]**7
+        fx[alpha0To25] = (
+            1
+            + (-0.667) * alpha[alpha0To25]
+            + (-0.4445555) * alpha[alpha0To25] ** 2
+            + (-0.663086601049) * alpha[alpha0To25] ** 3
+            + 1.451297044490 * alpha[alpha0To25] ** 4
+            + (-0.887998041597) * alpha[alpha0To25] ** 5
+            + 0.234528941479 * alpha[alpha0To25] ** 6
+            + (-0.023185843322) * alpha[alpha0To25] ** 7
+        )
         fx[alphaL0] = np.exp(-c1x*alpha[alphaL0]/(1-alpha[alphaL0]))
         a1 = 4.9479
         gx = 1-np.exp(-a1*s**(-0.5))
@@ -725,9 +739,15 @@ class rSCAN(XCEvaluator):
         
         DfxDalpha = np.zeros((N_q))
         DfxDalpha[alphaG25] = -dx*np.exp(c2x/(1-alpha[alphaG25]))*(c2x/(1-alpha[alphaG25])**2)
-        DfxDalpha[alpha0To25] = -0.667 + (-0.4445555)*alpha[alpha0To25]*2 + (-0.663086601049)*(alpha[alpha0To25]**2)*3
-        +  1.451297044490*(alpha[alpha0To25]**3)*4 + (-0.887998041597)*(alpha[alpha0To25]**4)*5 + 0.234528941479*(alpha[alpha0To25]**5)*6
-        + (-0.023185843322)*(alpha[alpha0To25]**6)*7
+        DfxDalpha[alpha0To25] = (
+            -0.667
+            + (-0.4445555) * alpha[alpha0To25] * 2
+            + (-0.663086601049) * (alpha[alpha0To25] ** 2) * 3
+            + 1.451297044490 * (alpha[alpha0To25] ** 3) * 4
+            + (-0.887998041597) * (alpha[alpha0To25] ** 4) * 5
+            + 0.234528941479 * (alpha[alpha0To25] ** 5) * 6
+            + (-0.023185843322) * (alpha[alpha0To25] ** 6) * 7
+        )
         DfxDalpha[alphaL0] = np.exp(-c1x*alpha[alphaL0]/(1-alpha[alphaL0]))*(-c1x/(1-alpha[alphaL0])**2)
 
         DfxDn = DfxDalpha*DalphaDn
@@ -765,7 +785,7 @@ class r2SCAN(XCEvaluator):
     ):
         """Initialize r2SCAN evaluator."""
         if derivative_matrix is None:
-            raise ValueError("r2SCAN requires derivative_matrix")
+            raise ValueError("r2SCAN requires 'derivative_matrix'.")
         super().__init__(derivative_matrix=derivative_matrix, r_quad=r_quad, params=params)
     
     def _default_params(self) -> r2SCANParameters:
@@ -831,10 +851,17 @@ class r2SCAN(XCEvaluator):
             
             fx = np.zeros((N_q))
             fx[alphaG25] = -dx*np.exp(c2x/(1-alpha[alphaG25]))
-            fx[alpha0To25] = 1 + (-0.667)*alpha[alpha0To25] + (-0.4445555)*alpha[alpha0To25]**2 + (-0.663086601049)*alpha[alpha0To25]**3 
-            + 1.451297044490*alpha[alpha0To25]**4 + (-0.887998041597)*alpha[alpha0To25]**5 + 0.234528941479*alpha[alpha0To25]**6
-            + (-0.023185843322)*alpha[alpha0To25]**7
-            
+            fx[alpha0To25] = (
+                1
+                + (-0.667) * alpha[alpha0To25]
+                + (-0.4445555) * alpha[alpha0To25] ** 2
+                + (-0.663086601049) * alpha[alpha0To25] ** 3
+                + 1.451297044490 * alpha[alpha0To25] ** 4
+                + (-0.887998041597) * alpha[alpha0To25] ** 5
+                + 0.234528941479 * alpha[alpha0To25] ** 6
+                + (-0.023185843322) * alpha[alpha0To25] ** 7
+            )
+
             fx[alphaL0] = np.exp(-c1x*alpha[alphaL0]/(1-alpha[alphaL0]))
             a1 = 4.9479
             gx = 1-np.exp(-a1*p**(-0.25))
@@ -854,10 +881,16 @@ class r2SCAN(XCEvaluator):
 
             DfxDalpha = np.zeros((N_q))
             DfxDalpha[alphaG25] = -dx*np.exp(c2x/(1-alpha[alphaG25]))*(c2x/(1-alpha[alphaG25])**2)
-            DfxDalpha[alpha0To25] = (-0.667) + (-0.4445555)*alpha[alpha0To25]*2 + (-0.663086601049)*alpha[alpha0To25]**2*3
-            + 1.451297044490*alpha[alpha0To25]**3*4 + (-0.887998041597)*alpha[alpha0To25]**4*5 + 0.234528941479*alpha[alpha0To25]**5*6
-            + (-0.023185843322)*alpha[alpha0To25]**6*7
-            
+            DfxDalpha[alpha0To25] = (
+                (-0.667)
+                + (-0.4445555) * alpha[alpha0To25] * 2
+                + (-0.663086601049) * alpha[alpha0To25] ** 2 * 3
+                + 1.451297044490 * alpha[alpha0To25] ** 3 * 4
+                + (-0.887998041597) * alpha[alpha0To25] ** 4 * 5
+                + 0.234528941479 * alpha[alpha0To25] ** 5 * 6
+                + (-0.023185843322) * alpha[alpha0To25] ** 6 * 7
+            )
+
             DfxDalpha[alphaL0] = np.exp(-c1x*alpha[alphaL0]/(1-alpha[alphaL0]))*(-c1x/(1-alpha[alphaL0])**2)
             DfxDn = DfxDalpha*DalphaDn
             DfxDDn = DfxDalpha*DalphaDDn
@@ -1015,9 +1048,16 @@ class r2SCAN(XCEvaluator):
 
             fc = np.zeros((N_q))
             fc[alphaG25] = -dc*np.exp(c2c/(1-alpha[alphaG25]))
-            fc[alpha0To25] = 1 + (-0.64)*alpha[alpha0To25] + (-0.4352)*alpha[alpha0To25]**2 + (-1.535685604549)*alpha[alpha0To25]**3 
-            + 3.061560252175*alpha[alpha0To25]**4 + (-1.915710236206)*alpha[alpha0To25]**5 + 0.516884468372*alpha[alpha0To25]**6 
-            + (-0.051848879792)*alpha[alpha0To25]**7
+            fc[alpha0To25] = (
+                1
+                + (-0.64) * alpha[alpha0To25]
+                + (-0.4352) * alpha[alpha0To25] ** 2
+                + (-1.535685604549) * alpha[alpha0To25] ** 3
+                + 3.061560252175 * alpha[alpha0To25] ** 4
+                + (-1.915710236206) * alpha[alpha0To25] ** 5
+                + 0.516884468372 * alpha[alpha0To25] ** 6
+                + (-0.051848879792) * alpha[alpha0To25] ** 7
+            )
             fc[alphaL0] = np.exp(-c1c*alpha[alphaL0]/(1-alpha[alphaL0]))
             ec = ec1 + fc*(ec0-ec1)
             
@@ -1077,9 +1117,15 @@ class r2SCAN(XCEvaluator):
             
             DfcDalpha = np.zeros((N_q))
             DfcDalpha[alphaG25] = fc[alphaG25]*(c2c/(1-alpha[alphaG25])**2)
-            DfcDalpha[alpha0To25] = (-0.64) + (-0.4352)*alpha[alpha0To25]*2 + (-1.535685604549)*alpha[alpha0To25]**2*3 
-            + 3.061560252175*alpha[alpha0To25]**3*4 + (-1.915710236206)*alpha[alpha0To25]**4*5 + 0.516884468372*alpha[alpha0To25]**5*6
-            + (-0.051848879792)*alpha[alpha0To25]**6*7
+            DfcDalpha[alpha0To25] = (
+                (-0.64)
+                + (-0.4352) * alpha[alpha0To25] * 2
+                + (-1.535685604549) * alpha[alpha0To25] ** 2 * 3
+                + 3.061560252175 * alpha[alpha0To25] ** 3 * 4
+                + (-1.915710236206) * alpha[alpha0To25] ** 4 * 5
+                + 0.516884468372 * alpha[alpha0To25] ** 5 * 6
+                + (-0.051848879792) * alpha[alpha0To25] ** 6 * 7
+            )
             DfcDalpha[alphaL0] = fc[alphaL0]*(-c1c/(1-alpha[alphaL0])**2)
             DfcDn = DfcDalpha*DalphaDn
             DfcDDn = DfcDalpha*DalphaDDn

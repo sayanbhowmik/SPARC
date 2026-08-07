@@ -15,22 +15,22 @@ from ..mesh.builder import Mesh1D
 
 
 OPS_BUILDER_TYPE_ERROR_MESSAGE = \
-    "ops_builder must be an instance of RadialOperatorsBuilder, but got {} instead"
-Z_VALENCE_TYPE_ERROR_MESSAGE = \
-    "parameter z_valence must be a float, get type {} instead"
+    "ops_builder must be an instance of RadialOperatorsBuilder, but get {} instead."
+N_FREE_ELECTRONS_TYPE_ERROR_MESSAGE = \
+    "parameter 'n_free_electrons' must be a float, get type {} instead."
 RHS_VECTOR_TYPE_ERROR_MESSAGE = \
-    "parameter rhs_vector must be a numpy array, get type {} instead"
+    "parameter 'rhs_vector' must be a numpy array, get type {} instead."
 RHS_VECTOR_NDIM_ERROR_MESSAGE = \
-    "parameter rhs_vector must be a 1D array, get type {} instead"
+    "parameter 'rhs_vector' must be a 1D array, get type {} instead."
 RHS_VECTOR_SHAPE_ERROR_MESSAGE = \
-    "parameter rhs_vector shape {} must match Laplacian matrix size {}"
+    "parameter 'rhs_vector' shape {} must match Laplacian matrix size {}."
 
 RHO_TYPE_ERROR_MESSAGE = \
-    "parameter rho must be a numpy array, get type {} instead"
+    "parameter 'rho' must be a numpy array, get type {} instead."
 RHO_NDIM_ERROR_MESSAGE = \
-    "parameter rho must be a 1D array, get type {} instead"
+    "parameter 'rho' must be a 1D array, get type {} instead."
 RHO_SHAPE_ERROR_MESSAGE = \
-    "parameter rho shape {} must match quadrature nodes size {}"
+    "parameter 'rho' shape {} must match quadrature nodes size {}."
 
 
 
@@ -45,39 +45,33 @@ class PoissonSolver:
     ops_builder : RadialOperatorsBuilder
         Provides Laplacian matrix and grid information
     """
+
     
     def __init__(
         self, 
         ops_builder: RadialOperatorsBuilder, 
-        z_valence: float,
-        ):
+        n_free_electrons: float,
+    ):
         # type check for required parameters
         assert isinstance(ops_builder, RadialOperatorsBuilder), \
             OPS_BUILDER_TYPE_ERROR_MESSAGE.format(type(ops_builder))
         try:
-            z_valence = float(z_valence)
+            n_free_electrons = float(n_free_electrons)
         except:
-            raise ValueError(Z_VALENCE_TYPE_ERROR_MESSAGE.format(type(z_valence)))
+            raise ValueError(N_FREE_ELECTRONS_TYPE_ERROR_MESSAGE.format(type(n_free_electrons)))
 
-        self.ops_builder = ops_builder
-        self.z_valence = z_valence
+        self.ops_builder      = ops_builder
+        self.n_free_electrons = n_free_electrons
         
         
         # laplacian matrix and set boundary conditions
-        _laplacian = ops_builder.laplacian
-        _laplacian[0,:] = 0
-        _laplacian[-1,:] = 0
-        _laplacian[:,0] = 0
-        _laplacian[0,0] = -1
-        _laplacian[-1,-1] = -1
-        self.laplacian_with_boundary_conditions = _laplacian
+        self.laplacian = ops_builder.laplacian
+
 
         # store some other useful information
-        self.number_of_finite_elements : int = ops_builder.number_of_finite_elements
-        self.quadrature_nodes   : np.ndarray = ops_builder.quadrature_nodes
-        self.quadrature_weights : np.ndarray = ops_builder.quadrature_weights
-
-
+        self.finite_element_number : int        = ops_builder.finite_element_number
+        self.quadrature_nodes      : np.ndarray = ops_builder.quadrature_nodes
+        self.quadrature_weights    : np.ndarray = ops_builder.quadrature_weights
 
     
     
@@ -118,22 +112,28 @@ class PoissonSolver:
         transformations or interpolation. Boundary condition enforcement 
         is handled through matrix modification (done in __init__).
         """
+        
         # Type and shape validation
         assert isinstance(rhs_vector, np.ndarray), \
             RHS_VECTOR_TYPE_ERROR_MESSAGE.format(type(rhs_vector))
         assert rhs_vector.ndim == 1, \
             RHS_VECTOR_NDIM_ERROR_MESSAGE.format(rhs_vector.ndim)
-        assert rhs_vector.shape[0] == self.laplacian_with_boundary_conditions.shape[0], \
+        assert rhs_vector.shape[0] == self.laplacian.shape[0], \
             RHS_VECTOR_SHAPE_ERROR_MESSAGE.format(rhs_vector.shape[0], self.laplacian.shape[0])
 
-        # Solve linear system: L @ u = rhs
-        solution = scipy.linalg.solve(self.laplacian_with_boundary_conditions, rhs_vector[:, np.newaxis])[:, 0]
+        left_boundary_condition  = rhs_vector[0]
+        right_boundary_condition = rhs_vector[-1] * (-1.0)
 
-        # np.savetxt("solution.txt", solution.reshape(-1))
-        # np.savetxt("rhs_vector.txt", rhs_vector.reshape(-1))
-        # np.savetxt("laplacian_with_boundary_conditions.txt", self.laplacian_with_boundary_conditions.reshape(-1))
-        # raise RuntimeError("Stop here")
+        # Solve linear system: L @ u = rhs
+        rhs_vector_without_boundary_conditions = rhs_vector[1:-1] - right_boundary_condition * self.laplacian[1:-1, -1]
+        solution_inner = scipy.linalg.solve(self.laplacian[1:-1,1:-1], rhs_vector_without_boundary_conditions)
+        # solution_inner = scipy.linalg.lstsq(self.laplacian[1:-1,1:-1], rhs_vector_without_boundary_conditions)[0]
         
+        solution = np.zeros_like(rhs_vector)
+        solution[1:-1] = solution_inner
+        solution[0] = left_boundary_condition
+        solution[-1] = right_boundary_condition
+
         return solution
     
     
@@ -154,10 +154,6 @@ class PoissonSolver:
         rho : np.ndarray
             Electron density at quadrature nodes
             Shape: (N_quad,)
-        Z : float, optional
-            Nuclear charge (for computing total charge Q)
-            If provided: Q = Z - ∫ρd³r
-            If None: Q = ∫ρd³r (for testing/special cases)
         
         Returns
         -------
@@ -174,11 +170,11 @@ class PoissonSolver:
 
 
         # prepare the rhs_vector for the 1D Poisson equation
-        rhs_vector = self.ops_builder.assemble_poisson_rhs_vector(rho, self.z_valence)
+        rhs_vector = self.ops_builder.assemble_poisson_rhs_vector_no_bc(rho=rho)
 
         # Set the boundary values
         rhs_vector[0] = 0.0
-        rhs_vector[-1] = - self.z_valence
+        rhs_vector[-1] = - self.n_free_electrons
 
         # solve the 1D Poisson equation at dense physical nodes
         r_times_v_hartree_at_dense_physical_nodes = self.solve_1d(rhs_vector)  # r * v_hartree
@@ -186,7 +182,7 @@ class PoissonSolver:
         # Convert to quadrature nodes
         r_times_v_hartree_at_dense_physical_nodes_reshaped = Mesh1D.fe_flat_to_block2d(
             flat = r_times_v_hartree_at_dense_physical_nodes, 
-            n_elem = self.number_of_finite_elements, 
+            n_elem = self.finite_element_number, 
             endpoints_shared = True
         )
 

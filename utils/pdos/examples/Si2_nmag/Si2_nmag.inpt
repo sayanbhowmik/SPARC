@@ -1,0 +1,25 @@
+# Non-magnetic Si2 (diamond primitive cell), spin-unpolarized.
+# Paired with Si2_nmag_spin: DOS/PDOS should match when magnetization ~ 0.
+
+SPIN_TYP: 0
+
+LATVEC:
+ 0.5  0.5  0.0
+ 0.0  0.5  0.5
+ 0.5  0.0  0.5
+LATVEC_SCALE: 10.606601717798211 10.606601717798211 10.606601717798211
+
+KPOINT_GRID: 2 2 2
+BC: P P P
+MESH_SPACING: 0.55
+
+EXCHANGE_CORRELATION: GGA_PBE
+TOL_SCF: 1e-5
+SMEARING: 0.001
+ELEC_TEMP_TYPE: fd
+NSTATES: 12
+
+PRINT_DENSITY: 1
+CALC_STRESS: 1
+PRINT_EIGEN: 1
+PRINT_ORBITAL: 1

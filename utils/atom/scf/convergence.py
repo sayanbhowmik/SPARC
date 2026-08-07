@@ -3,15 +3,40 @@ Convergence criteria and checkers for SCF iterations
 """
 
 from __future__ import annotations
+import time
 import numpy as np
 from typing import Optional
 from dataclasses import dataclass
 
 # Convergence Checker Error Messages
 LOOP_TYPE_ERROR_MESSAGE = \
-    "parameter loop_type must be 'Inner' or 'Outer', get {} instead"
+    "parameter 'loop_type' must be 'Inner' or 'Outer', get {} instead."
 FOOTER_BLANK_LINE_TYPE_ERROR_MESSAGE = \
-    "parameter footer_blank_line must be a boolean, get type {} instead"
+    "parameter 'footer_blank_line' must be a boolean, get type {} instead."
+
+# Global variable for the number of decimal places to print for the timing column
+TIME_PRINT_DECIMAL_PLACES = 3
+
+
+def set_time_print_decimal_places(n: int) -> None:
+    global TIME_PRINT_DECIMAL_PLACES
+    assert isinstance(n, int) and n >= 0, "time_print_decimal_places must be a non-negative int"
+    TIME_PRINT_DECIMAL_PLACES = n
+
+
+def format_wall_duration(seconds: float) -> str:
+    d = TIME_PRINT_DECIMAL_PLACES
+    spec = f".{d}f"
+    s = max(0.0, float(seconds))
+    if s < 60.0:
+        return f"{format(s, spec)} s"
+    if s < 3600.0:
+        m, r = divmod(s, 60.0)
+        return f"{int(m)} m {format(r, spec)} s ({format(s, spec)} s total)"
+    h, rem = divmod(s, 3600.0)
+    m, r = divmod(rem, 60.0)
+    return f"{int(h)} h {int(m)} m {format(r, spec)} s ({format(s, spec)} s total)"
+
 
 @dataclass
 class ConvergenceHistory:
@@ -69,6 +94,7 @@ class ConvergenceChecker:
 
         self._consecutive_count = 0
         self._history = ConvergenceHistory(iterations=[], residuals=[])
+        self._prev_perf_time: Optional[float] = None
 
     def set_footer_blank_line(self, footer_blank_line: bool):
         """
@@ -86,7 +112,7 @@ class ConvergenceChecker:
         iteration: int,
         print_status: bool = False,
         prefix: str = ""
-        ) -> tuple[bool, float]:
+    ) -> tuple[bool, float]:
         """
         Check if SCF has converged
         
@@ -105,6 +131,10 @@ class ConvergenceChecker:
             Prefix for printed output (e.g., "  " for indentation)
             Default: ""
         
+        For inner loops with ``print_status=True``, the printed **Timing (sec)**
+        column is the wall time since the previous ``check`` call (or since
+        ``reset`` for the first row after a reset).
+        
         Returns
         -------
         converged : bool
@@ -112,6 +142,13 @@ class ConvergenceChecker:
         residual : float
             Convergence residual for this iteration
         """
+        t_now = time.perf_counter()
+        if self._prev_perf_time is None:
+            iteration_elapsed_sec = 0.0
+        else:
+            iteration_elapsed_sec = t_now - self._prev_perf_time
+        self._prev_perf_time = t_now
+
         # Compute relative residual
         residual = self._compute_residual(rho_in, rho_out)
         
@@ -132,7 +169,7 @@ class ConvergenceChecker:
         
         # Print status if requested
         if print_status:
-            self.print_status(iteration, residual, prefix)
+            self.print_status(iteration, residual, prefix, iteration_elapsed_sec)
         
         return converged, residual
     
@@ -155,6 +192,7 @@ class ConvergenceChecker:
         """Reset convergence state"""
         self._consecutive_count = 0
         self._history = ConvergenceHistory(iterations=[], residuals=[])
+        self._prev_perf_time = time.perf_counter()
     
     
     @property
@@ -165,26 +203,36 @@ class ConvergenceChecker:
     
     def print_header(self, prefix: str = ""):
         """Print table header for convergence status"""
-        print(f"{prefix}\t {'Iter':^4}  {'Residual':^14}  {'Target':^14}  {'Converged':^8}")
-        print(f"{prefix}{'-'*60}")
+        print(f"{prefix}\t {'Iter':^4}  {'Residual':^14}  {'Target':^14}  {'Converged':^8}  {'Timing (sec)':^16}")
+        print(f"{prefix}{'-'*75}")
     
     
-    def print_status(self, iteration: int, residual: float, prefix: str = ""):
-        """Print convergence status in table format"""
+    def print_status(
+        self,
+        iteration: int,
+        residual: float,
+        prefix: str = "",
+        iteration_elapsed_sec: float = 0.0,
+    ):
+        """Print convergence status in table format (inner loop includes timing)."""
         status = "Yes" if residual < self.tolerance else "No"
         if self.loop_type == "Outer":
             print(f"{prefix}\t Density residual of outer iteration: {residual:.6e}")
             print()
         else:
-            # print(f"[Inner] Iter {iteration:3d}: residual = {residual:.8e} {status}")
-            print(f"{prefix}\t {iteration:^4d}  {residual:^14.6e}  {self.tolerance:^14.6e}  {status:^8}")
+            d = TIME_PRINT_DECIMAL_PLACES
+            print(
+                f"{prefix}\t {iteration:^4d}  {residual:^14.6e}  "
+                f"{self.tolerance:^14.6e}  {status:^8}  "
+                f"{format(iteration_elapsed_sec, f'^{16}.{d}f')}"
+            )
     
     
     def print_footer(self, converged: bool, n_iterations: int, prefix: str = ""):
         """Print table footer with final status"""
-        status_msg = "converged" if converged else "not converged"
+        status_msg = "converged" if converged else "did not converge"
         if self.loop_type == "Outer":
-            print(f"{prefix} Outer SCF iteration converged after {n_iterations} iteration(s)")
+            print(f"{prefix} Outer SCF iteration {status_msg} after {n_iterations} iteration(s)")
         else:
             print(f"{prefix}\t SCF Iteration {status_msg} after {n_iterations} iteration(s)")
         

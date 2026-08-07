@@ -8,7 +8,8 @@ import numpy as np
 from typing import Optional
 from dataclasses import dataclass
 
-from ..mesh.operators import GridData
+from ..mesh.builder import Mesh1D
+from ..mesh.operators import GridData, RadialOperatorsBuilder
 from ..utils.occupation_states import OccupationInfo
 
 # Constant values
@@ -20,20 +21,20 @@ RHO_INTEGRAL_TOO_SMALL_WARNING = \
 
 # Error messages
 GRID_DATA_TYPE_ERROR_MESSAGE = \
-    "parameter grid_data must be an instance of GridData, get type {} instead"
+    "parameter 'grid_data' must be an instance of GridData, get type {} instead."
 DERIVATIVE_MATRIX_TYPE_ERROR_MESSAGE = \
-    "parameter derivative_matrix must be an instance of np.ndarray, get type {} instead"
+    "parameter 'derivative_matrix' must be an instance of np.ndarray, get type {} instead."
 DERIVATIVE_MATRIX_SHAPE_ERROR_MESSAGE = \
-    "parameter derivative_matrix's shape {shape} must match grid_data shape ({n_elem}, {n_quad}, {n_quad})"
+    "parameter 'derivative_matrix''s shape {shape} must match grid_data shape ({n_elem}, {n_quad}, {n_quad})."
 DERIVATIVE_MATRIX_NDIM_ERROR_MESSAGE = \
-    "parameter derivative_matrix must be a 3D array, get dimension {} instead"
+    "parameter 'derivative_matrix' must be a 3D array, get dimension {} instead."
 OCCUPATION_INFO_TYPE_ERROR_MESSAGE = \
-    "parameter occupation_info must be an instance of OccupationInfo, get type {} instead"
+    "parameter 'occupation_info' must be an instance of OccupationInfo, get type {} instead."
 VERBOSE_TYPE_ERROR_MESSAGE = \
-    "parameter verbose must be an instance of bool, get type {} instead"
+    "parameter 'verbose' must be an instance of bool, get type {} instead."
 
 RHO_NLCC_SHAPE_ERROR_MESSAGE = \
-    "parameter rho_nlcc must have the same number of quadrature points as orbitals, get shape {} instead"
+    "parameter 'rho_nlcc' must have the same number of quadrature points as orbitals, get shape {} instead."
 
 
 @dataclass
@@ -51,6 +52,16 @@ class DensityData:
         if self.tau is not None:
             assert self.tau.shape[0] == n_points
 
+    def multiply_by(self, factor: float) -> DensityData:
+        """
+        Return a new DensityData with the density multiplied by a factor
+        """
+        return DensityData(
+            rho      = self.rho * factor,
+            grad_rho = self.grad_rho * factor if self.grad_rho is not None else None,
+            tau      = self.tau * factor if self.tau is not None else None,
+        )
+
 
 class DensityCalculator:
     """
@@ -67,7 +78,8 @@ class DensityCalculator:
         grid_data         : GridData, 
         occupation_info   : OccupationInfo, 
         derivative_matrix : np.ndarray, 
-        verbose: bool = False):
+        verbose           : bool = False
+    ):
         """
         Parameters
         ----------
@@ -81,12 +93,14 @@ class DensityCalculator:
             If True, print normalization information during density calculation
         """
 
+        self.n_finite_elements  = grid_data.finite_element_number
+        self.physical_nodes     = grid_data.physical_nodes
         self.quadrature_nodes   = grid_data.quadrature_nodes
         self.quadrature_weights = grid_data.quadrature_weights
         self.occupation_info    = occupation_info
         self.derivative_matrix  = derivative_matrix
         self.verbose            = verbose
-        self.n_electrons        = np.sum(occupation_info.occupations)
+        self.n_electrons        = occupation_info.n_free_electrons
 
         assert isinstance(grid_data, GridData), \
             GRID_DATA_TYPE_ERROR_MESSAGE.format(type(grid_data))
@@ -97,14 +111,18 @@ class DensityCalculator:
         assert isinstance(self.verbose, bool), \
             VERBOSE_TYPE_ERROR_MESSAGE.format(type(self.verbose))
         assert self._check_derivative_matrix_shape(self.derivative_matrix, grid_data)
+
+
+        # cached operators builder, used only for laplacian calculation in weak form
+        self._cached_ops_builder = None
     
 
     @staticmethod
     def _check_derivative_matrix_shape(derivative_matrix: np.ndarray, grid_data: GridData) -> bool:
         assert derivative_matrix.ndim == 3, \
             DERIVATIVE_MATRIX_NDIM_ERROR_MESSAGE.format(derivative_matrix.ndim)
-        _n_elem = grid_data.number_of_finite_elements
-        _n_quad = grid_data.quadrature_nodes.shape[0] // grid_data.number_of_finite_elements
+        _n_elem = grid_data.finite_element_number
+        _n_quad = grid_data.quadrature_nodes.shape[0] // grid_data.finite_element_number
         assert derivative_matrix.shape == (_n_elem, _n_quad, _n_quad), \
             DERIVATIVE_MATRIX_SHAPE_ERROR_MESSAGE.format(
                 shape = derivative_matrix.shape, 
@@ -116,9 +134,10 @@ class DensityCalculator:
 
     def compute_density(
         self, 
-        orbitals: np.ndarray,
-        normalize: bool = True
-        ) -> np.ndarray:
+        orbitals    : np.ndarray,
+        normalize   : bool = True,
+        occupations : Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """
         Compute electron density from orbitals
         
@@ -129,20 +148,25 @@ class DensityCalculator:
             These are R_nl(r), not R_nl(r)/r
         normalize : bool
             If True, normalize density to correct number of electrons
-        
+        occupations : Optional[np.ndarray], optional
+            Occupation numbers, shape (n_states,), 
+            Default: occupation_info.occupations if not provided
+
         Returns
         -------
         rho : np.ndarray
             Electron density at quadrature points, shape (n_quad_points,)
         """
-        
+        # initialize using default occupations if not provided
+        using_default_occupations = occupations is None
+        if occupations is None:
+            occupations = self.occupation_info.occupations
+
         # Convert radial wavefunction R(r) to true wavefunction ψ(r) = R(r)/r
         wavefunction = orbitals / self.quadrature_nodes[:, np.newaxis]
 
-        
         # Density: ρ(r) = (1/4π) Σ f_i |ψ_i|²
-        occupations = self.occupation_info.occupations[np.newaxis, :]
-
+        occupations = occupations[np.newaxis, :]
 
         rho = (1.0 / (4 * np.pi)) * np.sum(
             occupations * wavefunction**2,
@@ -151,7 +175,12 @@ class DensityCalculator:
         
         # Normalize to correct electron count
         if normalize:
-            rho = self.normalize_density(rho)
+            if using_default_occupations:
+                # Default path: normalize to the free-electron count from OccupationInfo
+                rho = self.normalize_density(rho, n_electrons=self.occupation_info.n_free_electrons)
+            else:
+                # Explicit occupations path: normalize to the sum of provided occupations
+                rho = self.normalize_density(rho, n_electrons=float(np.sum(occupations)))
 
         return rho
     
@@ -186,7 +215,7 @@ class DensityCalculator:
         This is used by GGA functionals (PBE, etc.) to compute σ = |∇ρ|².
         """
         # Get dimensions
-        n_elem = self.derivative_matrix.shape[0]  # number of elements
+        n_elem = self.derivative_matrix.shape[0]    # number of elements
         n_quad = self.derivative_matrix.shape[1]    # quadrature points per element
         
         # Compute ρ·r and reshape for element-wise differentiation
@@ -195,14 +224,146 @@ class DensityCalculator:
         
         # Apply derivative matrix: D @ (ρ·r)
         d_rho_r_dr = np.matmul(self.derivative_matrix, rho_times_r_reshaped).reshape(-1)
-        
+
         # Compute dρ/dr = [d(ρ·r)/dr - ρ] / r
         grad_rho = (d_rho_r_dr - rho) / self.quadrature_nodes
         
         return grad_rho
     
+
+
+
+    def compute_density_laplacian(self, rho: np.ndarray) -> np.ndarray:
+        """
+        Compute density Laplacian for meta-GGA functionals.
+
+        Uses nabla^2 f = (1/r)(rf)'' where (rf)'' is the second derivative of r*f.
+        
+        Parameters
+        ----------
+        rho : np.ndarray
+            Electron density at quadrature points, shape (N_quad,)
+        
+        Returns
+
+        laplacian_rho : np.ndarray
+            Density Laplacian at quadrature points, shape (N_quad,)
+        """
+        # Get dimensions
+        n_elem = self.derivative_matrix.shape[0]  # number of elements
+        n_quad = self.derivative_matrix.shape[1]  # quadrature points per element
+        
+        # Reshape for element-wise differentiation
+        rho_reshaped              = rho.reshape(n_elem, n_quad, 1)
+        quadrature_nodes_reshaped = self.quadrature_nodes.reshape(n_elem, n_quad, 1)
+
+        # Laplacian: nabla^2 f = (1/r)(rf)''
+        rho_times_r_reshaped = quadrature_nodes_reshaped * rho_reshaped
+        d_rf_dr   = np.matmul(self.derivative_matrix, rho_times_r_reshaped)
+        d2_rf_dr2 = np.matmul(self.derivative_matrix, d_rf_dr)
+        laplacian_rho_reshaped = d2_rf_dr2 / quadrature_nodes_reshaped
+
+        return laplacian_rho_reshaped.reshape(-1)
+
     
-    def compute_kinetic_energy_density(self, orbitals: np.ndarray) -> np.ndarray:
+    def compute_density_laplacian_in_weak_form(self, rho: np.ndarray) -> np.ndarray:
+        """
+        Compute density Laplacian by using the weak form.
+        
+        Weak form (integration by parts on [0, R]):
+            ∫₀^R φ_i ℓ r² dr = -∫₀^R φ_i' ρ' r² dr + R² φ_i(R) ρ'(R)
+        where ℓ = ∇²ρ (Laplacian of density), φ_i are test functions, ρ' = dρ/dr.
+        
+        Parameters
+        ----------
+        rho : np.ndarray
+            Electron density at quadrature points, shape (N_quad,)
+        
+        Returns
+        -------
+        laplacian_rho : np.ndarray
+            Density Laplacian at quadrature points, shape (N_quad,)
+        """
+        ops_builder = self.ops_builder
+        grad_rho = self.compute_density_gradient(rho)
+
+        # Solve the Laplacian equation in weak form, on physical nodes
+        rhs_vector  = ops_builder.assemble_laplacian_rhs_vector_with_gradient_and_no_bc(grad_rho)
+        H_r_squared = ops_builder.build_potential_matrix(potential_values=self.quadrature_nodes**2)
+
+        # Solve the Laplacian equation
+        laplacian_rho_physical_nodes = np.linalg.solve(H_r_squared, rhs_vector)
+
+        # Convert to quadrature nodes
+        laplacian_rho_physical_nodes_reshaped = Mesh1D.fe_flat_to_block2d(
+            flat = laplacian_rho_physical_nodes, 
+            n_elem = self.n_finite_elements, 
+            endpoints_shared = True
+        )
+
+        laplacian_rho = np.einsum(
+            "emi,ei->em",
+            ops_builder.lagrange_basis,
+            laplacian_rho_physical_nodes_reshaped,
+            optimize=True
+        ).reshape(-1)
+        
+        return laplacian_rho
+        
+
+
+    def _compute_density_laplacian_in_weaker_form(self, rho: np.ndarray) -> np.ndarray:
+        """
+        Compute density Laplacian by using the weaker form.
+
+        Weaker form (integration by parts on [0, R]):
+            ∫₀^R φ_i ℓ r² dr = ∫₀^R (r² φ_i')' ρ dr - [r² φ_i'(r) ρ(r)]₀^R + [r² φ_i(r) ρ'(r)]₀^R
+        where ℓ = ∇²ρ (Laplacian of density), φ_i are test functions, ρ' = dρ/dr.
+
+        Parameters
+        ----------
+        rho : np.ndarray
+            Electron density at quadrature points, shape (N_quad,)
+
+        Returns
+        -------
+        laplacian_rho : np.ndarray
+            Density Laplacian at quadrature points, shape (N_quad,)
+        """
+        ops_builder = self.ops_builder
+
+        rhs_vector  = ops_builder.assemble_laplacian_rhs_vector_with_rho_and_no_bc(rho)
+        H_r_squared = ops_builder.build_potential_matrix(
+            potential_values=self.quadrature_nodes**2
+        )
+
+        laplacian_rho_physical_nodes = np.linalg.solve(H_r_squared, rhs_vector)
+
+        laplacian_rho_physical_nodes_reshaped = Mesh1D.fe_flat_to_block2d(
+            flat   = laplacian_rho_physical_nodes,
+            n_elem = self.n_finite_elements,
+            endpoints_shared=True,
+        )
+
+        laplacian_rho = np.einsum(
+            "emi,ei->em",
+            ops_builder.lagrange_basis,
+            laplacian_rho_physical_nodes_reshaped,
+            optimize=True,
+        ).reshape(-1)
+
+        raise DeprecationWarning("The weaker form is deprecated. Use the weak form instead.")
+
+        return laplacian_rho
+
+
+
+    
+    def compute_kinetic_energy_density(
+        self, 
+        orbitals    : np.ndarray,
+        occupations : Optional[np.ndarray] = None,
+    ) -> np.ndarray:
         """
         Compute kinetic energy density τ for meta-GGA functionals.
         
@@ -212,12 +373,20 @@ class DensityCalculator:
         ----------
         orbitals : np.ndarray
             Radial wavefunctions R_nl(r), shape (n_grid, n_states)
+        occupations : Optional[np.ndarray], optional
+            Occupation numbers, shape (n_states,), 
+            Default: occupation_info.occupations if not provided
         
         Returns
         -------
         tau : np.ndarray
             Kinetic energy density at quadrature points, shape (n_grid,)
         """
+        # Get occupation numbers and angular momentum quantum numbers if not provided
+        if occupations is None:
+            occupations = self.occupation_info.occupations
+        l_values = self.occupation_info.l_values
+
         # Get dimensions
         n_grid, n_states = orbitals.shape         # orbitals: (n_quad_points, n_states)
         n_elem = self.derivative_matrix.shape[0]  # Number of finite elements
@@ -232,10 +401,6 @@ class DensityCalculator:
         
         # Compute ∂(ψ)/∂r = [∂R/∂r - R/r] / r
         diff_orbitals_by_r = (diff_orbitals - orbitals_by_r) / self.quadrature_nodes[:, np.newaxis]
-        
-        # Get occupation numbers and angular momentum quantum numbers
-        occupations = self.occupation_info.occupations # Shape: (n_states,)
-        l_values    = self.occupation_info.l_values    # Shape: (n_states,)
         
         # Term 1: Radial derivative contribution |∂(ψ)/∂r|²
         term1 = 0.5 * occupations[np.newaxis, :] * diff_orbitals_by_r**2
@@ -255,7 +420,7 @@ class DensityCalculator:
         self,
         rho: np.ndarray,
         compute_gradient: bool = False
-        ) -> DensityData:
+    ) -> DensityData:
         """
         Create DensityData from electron density ρ
         
@@ -306,8 +471,9 @@ class DensityCalculator:
         orbitals         : Optional[np.ndarray] = None,
         compute_gradient : bool = False,
         compute_tau      : bool = False,
-        rho_nlcc         : Optional[np.ndarray] = None
-        ) -> DensityData:
+        rho_nlcc         : Optional[np.ndarray] = None,
+        occupations      : Optional[np.ndarray] = None,
+    ) -> DensityData:
         """
         Create DensityData from mixed density and orbitals.
         
@@ -343,6 +509,9 @@ class DensityCalculator:
             Non-linear core correction density from pseudopotential
             If provided, will be added to rho_mixed: ρ_total = ρ_mixed + ρ_nlcc
             Default: None (no core correction)
+        occupations : Optional[np.ndarray], optional
+            Occupation numbers, shape (n_states,), 
+            Default: occupation_info.occupations if not provided
         
         Returns
         -------
@@ -405,8 +574,10 @@ class DensityCalculator:
         # Compute tau from orbitals (only if requested)
         tau = None
         if compute_tau:
-            tau = self.compute_kinetic_energy_density(orbitals)
-        
+            tau = self.compute_kinetic_energy_density(
+                orbitals    = orbitals,
+                occupations = occupations,
+            )
         return DensityData(
             rho      = rho_total,
             grad_rho = grad_rho,
@@ -420,8 +591,9 @@ class DensityCalculator:
         compute_gradient : bool = False,
         compute_tau      : bool = False,
         normalize        : bool = True,
-        rho_nlcc         : Optional[np.ndarray] = None
-        ) -> DensityData:
+        rho_nlcc         : Optional[np.ndarray] = None,
+        occupations      : Optional[np.ndarray] = None,
+    ) -> DensityData:
         """
         Create DensityData from Kohn-Sham orbitals
         
@@ -451,6 +623,9 @@ class DensityCalculator:
             If provided, will be added to valence density: ρ_total = ρ_valence + ρ_nlcc
             This is used for XC functional evaluation in pseudopotential calculations
             Default: None (no core correction)
+        occupations : Optional[np.ndarray], optional
+            Occupation numbers, shape (n_states,), 
+            Default: occupation_info.occupations if not provided
         
         Returns
         -------
@@ -502,7 +677,7 @@ class DensityCalculator:
                 RHO_NLCC_SHAPE_ERROR_MESSAGE.format(rho_nlcc.shape)
 
         # Compute valence density from orbitals
-        rho_valence = self.compute_density(orbitals, normalize=normalize)
+        rho_valence = self.compute_density(orbitals, normalize=normalize, occupations=occupations)
         
         # Add NLCC if provided (for pseudopotential calculations)
         if rho_nlcc is not None:
@@ -518,7 +693,10 @@ class DensityCalculator:
         # Compute tau if requested (only from valence orbitals)
         tau = None
         if compute_tau:
-            tau = self.compute_kinetic_energy_density(orbitals)
+            tau = self.compute_kinetic_energy_density(
+                orbitals    = orbitals,
+                occupations = occupations,
+            )
         
         return DensityData(
             rho      = rho, 
@@ -526,9 +704,12 @@ class DensityCalculator:
             tau      = tau
         )
     
-
     
-    def normalize_density(self, rho: np.ndarray) -> np.ndarray:
+    def normalize_density(
+        self, 
+        rho         : np.ndarray,
+        n_electrons : Optional[float] = None,
+    ) -> np.ndarray:
         """
         Normalize density to integrate to correct number of electrons
         
@@ -538,12 +719,17 @@ class DensityCalculator:
         ----------
         density : np.ndarray
             Unnormalized electron density at quadrature points
+        n_electrons : Optional[float], optional
+            Number of electrons, default: self.n_electrons if not provided
         
         Returns
         -------
         normalized_density : np.ndarray
             Density rescaled to integrate to the correct electron count
         """
+        if n_electrons is None:
+            n_electrons = self.n_electrons
+
         # Compute the integrated electron count from current density
         # ∫ 4π r² ρ(r) dr using quadrature: Σ 4π r² ρ(r) w
         integrated_electron_count = np.sum(
@@ -556,7 +742,7 @@ class DensityCalculator:
             return np.ones_like(rho) * DEFAULT_DENSITY_VALUE
         
         # Rescale density to match target electron count
-        scaling_factor = self.n_electrons / integrated_electron_count
+        scaling_factor = n_electrons / integrated_electron_count
         normalized_rho = rho * scaling_factor
         
         return normalized_rho
@@ -570,13 +756,14 @@ class DensityCalculator:
         """
         return np.sum(4 * np.pi * self.quadrature_nodes**2 * rho * self.quadrature_weights)
     
+
     @staticmethod
     def add_nlcc_to_density_data(
         density_data_valence: 'DensityData',
         rho_nlcc: Optional[np.ndarray],
         quadrature_nodes: Optional[np.ndarray] = None,
         derivative_matrix: Optional[np.ndarray] = None
-        ) -> 'DensityData':
+    ) -> 'DensityData':
         """
         Add NLCC (non-linear core correction) to valence density data.
         
@@ -677,3 +864,24 @@ class DensityCalculator:
             tau=tau
         )
 
+
+    @property
+    def grid_data(self) -> GridData:
+        return GridData(
+            finite_element_number = self.n_finite_elements,
+            physical_nodes        = self.physical_nodes,
+            quadrature_nodes      = self.quadrature_nodes,
+            quadrature_weights    = self.quadrature_weights,
+        )
+
+
+    @property
+    def ops_builder(self) -> RadialOperatorsBuilder:
+        if self._cached_ops_builder is None:
+            self._cached_ops_builder = RadialOperatorsBuilder(
+                finite_element_number = self.n_finite_elements,
+                physical_nodes        = self.physical_nodes,
+                quadrature_nodes      = self.quadrature_nodes,
+                quadrature_weights    = self.quadrature_weights,
+            )
+        return self._cached_ops_builder

@@ -21,7 +21,7 @@ class NonLocalPseudopotential:
         self,
         pseudo,  # LocalPseudopotential instance
         ops_builder  # RadialOperatorsBuilder instance
-        ):
+    ):
         """
         Initialize non-local pseudopotential calculator.
         
@@ -45,7 +45,7 @@ class NonLocalPseudopotential:
         self.r_quad = ops_builder.quadrature_nodes
         self.w_quad = ops_builder.quadrature_weights
         self.lagrange_basis = ops_builder.lagrange_basis
-        self.n_elem = ops_builder.number_of_finite_elements
+        self.n_elem = ops_builder.finite_element_number
         self.n_quad = ops_builder.quadrature_node_number
         self.n_global_dofs = self.n_elem * (ops_builder.physical_node_number - 1) + 1
     
@@ -109,7 +109,7 @@ class NonLocalPseudopotential:
         self,
         projector_values: np.ndarray,
         r_cutoff: float
-        ) -> np.ndarray:
+    ) -> np.ndarray:
         """
         Interpolate projector function to quadrature grid.
         
@@ -162,7 +162,7 @@ class NonLocalPseudopotential:
             Shape: (n_global_dofs,)
         """
         # Reshape chi_r to element structure
-        from atom.mesh.builder import Mesh1D
+        from ..mesh.builder import Mesh1D
         
         chi_r_reshaped = Mesh1D.fe_flat_to_block2d(
             chi_r,
@@ -200,7 +200,7 @@ class NonLocalPseudopotential:
     def _assemble_local_to_global_vector(
         self,
         local_vector: np.ndarray
-        ) -> np.ndarray:
+    ) -> np.ndarray:
         """
         Assemble local element vectors to global vector.
         
@@ -233,7 +233,7 @@ class NonLocalPseudopotential:
     def compute_all_nonlocal_matrices(
         self,
         l_channels: np.ndarray
-        ) -> Dict[int, np.ndarray]:
+    ) -> Dict[int, np.ndarray]:
         """
         Compute non-local matrices for all required l channels.
         
@@ -265,7 +265,7 @@ class NonLocalPseudopotential:
         occupations     : np.ndarray,
         l_values        : np.ndarray,
         unique_l_values : np.ndarray
-        ) -> float:
+    ) -> float:
         """
         Compute non-local pseudopotential energy contribution.
         
@@ -306,7 +306,7 @@ class NonLocalPseudopotential:
             
             # Get projector data for this l channel
             nl_data = self.nonlocal_projectors[l]
-            gamma_coefficients = nl_data['gamma_Jl']  # Energy coefficients
+            gamma_coefficients  = nl_data['gamma_Jl']  # Energy coefficients
             projector_functions = nl_data['proj']      # Projector functions
             r_cutoff = self.r_cutoff_max_per_l[l]
             n_projectors = self.n_projectors_per_l[l]

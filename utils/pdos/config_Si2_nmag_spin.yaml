@@ -1,0 +1,7 @@
+sparc_path: "examples/Si2_nmag_spin/Si2_nmag_spin"
+output_dir: null
+gaussian_width: 0.2721140795
+N_PDOS: 1000
+sum_over_m_index: False
+full_pdos_calculation: True
+orthogonalize_atomic_orbitals: False

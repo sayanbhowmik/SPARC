@@ -1,110 +1,124 @@
 from __future__ import annotations
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Optional
 
 # error messages for class Quadrature1D
 QUADRATURE_POINT_NUMBER_NOT_INTEGER_ERROR = \
-    "quadrature_point_number must be an integer, get {} instead"
+    "parameter `quadrature_point_number` must be an integer, get {} instead."
 QUADRATURE_POINT_NUMBER_NOT_GREATER_THAN_0_ERROR = \
-    "quadrature_point_number must be greater than 0, get {} instead"
+    "parameter `quadrature_point_number` must be greater than 0, get {} instead."
+INTERVAL_ENDPOINT_NOT_REAL_NUMBER_ERROR = \
+    "parameter `{}` must be a real number, get {} instead."
+INTERVAL_ENDPOINT_MAX_NOT_GREATER_THAN_MIN_ERROR = \
+    "require interval endpoint `max_val` > `min_val` for Gauss-Legendre on [min_val, max_val], get min_val = {}, max_val = {} instead."
+TOLERANCE_NOT_POSITIVE_ERROR = \
+    "parameter `tol` must be positive, get {} instead."
 
 # error messages for class Mesh1D
-DOMAIN_RADIUS_NOT_FLOAT_ERROR = \
-    "domain_radius must be a float, get {} instead"
-DOMAIN_RADIUS_NOT_GREATER_THAN_0_ERROR = \
-    "domain_radius must be greater than 0, get {} instead"
+DOMAIN_SIZE_NOT_FLOAT_ERROR = \
+    "parameter `domain_size` must be a float, get {} instead."
+DOMAIN_SIZE_NOT_GREATER_THAN_0_ERROR = \
+    "parameter `domain_size` must be greater than 0, get {} instead."
 NUMBER_OF_FINITE_ELEMENTS_NOT_INTEGER_ERROR = \
-    "number_of_finite_elements must be an integer, get {} instead"
+    "parameter `number_of_finite_elements` must be an integer, get {} instead."
+FINITE_ELEMENT_NUMBER_NOT_INTEGER_ERROR = \
+    "parameter `finite_element_number` must be an integer, get {} instead."
 NUMBER_OF_FINITE_ELEMENTS_NOT_GREATER_THAN_0_ERROR = \
-    "number_of_finite_elements must be greater than 0, get {} instead"
+    "parameter `number_of_finite_elements` must be greater than 0, get {} instead."
+FINITE_ELEMENT_NUMBER_NOT_GREATER_THAN_0_ERROR = \
+    "parameter `finite_element_number` must be greater than 0, get {} instead."
 MESH_TYPE_NOT_STRING_ERROR = \
-    "mesh_type must be a string, get {} instead"
+    "parameter `mesh_type` must be a string, get {} instead."
 MESH_TYPE_NOT_IN_VALID_LIST_ERROR = \
-    "mesh_type must be in {}, get {} instead"
+    "parameter `mesh_type` must be in {}, get {} instead."
 CLUSTERING_PARAMETER_NOT_FLOAT_ERROR = \
-    "clustering_parameter must be a float, get {} instead"
+    "parameter `clustering_parameter` must be a float, get {} instead."
 CLUSTERING_PARAMETER_NOT_GREATER_THAN_0_ERROR = \
-    "clustering_parameter must be greater than 0, get {} instead"
+    "parameter `clustering_parameter` must be greater than 0, get {} instead."
 CLUSTERING_PARAMETER_NOT_NONE_FOR_UNIFORM_MESH_TYPE_WARNING = \
-    "Warning: clustering_parameter must be None for uniform mesh type"
+    "Warning: parameter `clustering_parameter` must be None for uniform mesh type"
 EXP_SHIFT_NOT_FLOAT_ERROR = \
-    "exp_shift must be a float, get {} instead"
+    "parameter `exp_shift` must be a float, get {} instead."
 EXP_SHIFT_NEGATIVE_ERROR = \
-    "exp_shift must be greater than or equal to 0, get {} instead"
+    "parameter `exp_shift` must be greater than or equal to 0, get {} instead."
 EXP_SHIFT_NOT_NONE_FOR_UNIFORM_AND_POLYNOMIAL_MESH_TYPE_WARNING = \
-    "Warning: exp_shift must be None for uniform and polynomial mesh type"
+    "Warning: parameter `exp_shift` must be None for uniform and polynomial mesh type"
 
 MESH_NODES_NOT_EQUAL_TO_NUMBER_OF_FINITE_ELEMENTS_PLUS_1_ERROR = \
-    "Number of nodes should be equal to number of finite elements + 1, get {} instead"
+    "number of nodes should be equal to number of finite elements + 1, get {} instead."
 MESH_WIDTH_NOT_EQUAL_TO_NUMBER_OF_FINITE_ELEMENTS_ERROR = \
-    "Number of widths should be equal to number of finite elements, get {} instead"
+    "number of widths should be equal to number of finite elements, get {} instead."
 
 BOUNDARIES_NODES_NOT_NUMPY_ARRAY_ERROR = \
-    "boundaries_nodes must be a numpy array"
+    "parameter `boundaries_nodes` must be a numpy array."
 INTERP_NODES_NOT_NUMPY_ARRAY_ERROR = \
-    "interp_nodes must be a numpy array"
+    "parameter `interp_nodes` must be a numpy array."
 
 
 BASE_NODES_NOT_NUMPY_ARRAY_ERROR = \
-    "base_nodes must be a numpy array"
+    "parameter `base_nodes` must be a numpy array."
 BASE_NODES_NOT_1D_ARRAY_ERROR = \
-    "base_nodes must be a 1D numpy array"
+    "parameter `base_nodes` must be a 1D numpy array."
 BASE_NODES_NOT_MONOTONICALLY_INCREASING_OR_DECREASING_ERROR = \
-    "base_nodes must be monotonically increasing or decreasing"
+    "parameter `base_nodes` must be monotonically increasing or decreasing."
 
 BOUNDARIES_NODES_NOT_MONOTONICALLY_INCREASING_ERROR = \
-    "boundaries_nodes must be monotonically increasing"
+    "parameter `boundaries_nodes` must be monotonically increasing."
 INTERP_NODES_NOT_MONOTONICALLY_INCREASING_ERROR = \
-    "interp_nodes must be monotonically increasing"
+    "parameter `interp_nodes` must be monotonically increasing."
 INTERP_WEIGHTS_NOT_NUMPY_ARRAY_ERROR = \
-    "interp_weights must be a numpy array"
+    "parameter `interp_weights` must be a numpy array."
     
 BOUNDARIES_NODES_NOT_AT_LEAST_2_ERROR = \
-    "boundaries_nodes must have length >= 2"
+    "parameter `boundaries_nodes` must have length >= 2."
 INTERP_NODES_AND_WEIGHTS_NOT_THE_SAME_LENGTH_ERROR = \
-    "interp_nodes and interp_weights must have the same length"
+    "parameter `interp_nodes` and `interp_weights` must have the same length."
 INTERP_NODES_NOT_AT_LEAST_1_ERROR = \
-    "interp_nodes must have length >= 1"
+    "parameter `interp_nodes` must have length >= 1."
 BOUNDARIES_NODES_NOT_NONDECREASING_ERROR = \
-    "boundaries_nodes must be nondecreasing"
+    "parameter `boundaries_nodes` must be nondecreasing."
 INTERP_NODES_NOT_INCLUDE_MINUS_1_AT_LEFT_BOUNDARY_ERROR = \
-    "interp_nodes must include -1 at the left boundary"
+    "parameter `interp_nodes` must include -1 at the left boundary."
 INTERP_NODES_NOT_INCLUDE_1_AT_RIGHT_BOUNDARY_ERROR = \
-    "interp_nodes must include 1 at the right boundary"
+    "parameter `interp_nodes` must include 1 at the right boundary."
 GLOBAL_NODES_NOT_EQUAL_TO_EXPECTED_LENGTH_ERROR = \
-    "Expected {} nodes, got {} instead"
+    "Expected {} nodes, get {} instead."
 
 FLAT_NOT_NUMPY_ARRAY_ERROR = \
-    "flat must be a numpy array, get {} instead"
+    "parameter `flat` must be a numpy array, get {} instead."
 FLAT_NOT_1D_ARRAY_ERROR = \
-    "flat must be a 1D numpy array, get {} instead"
+    "parameter `flat` must be a 1D numpy array, get {} instead."
 N_ELEM_NOT_INT_ERROR = \
-    "n_elem must be an integer, get {} instead"
+    "parameter `n_elem` must be an integer, get {} instead."
 ENDPOINTS_SHARED_NOT_BOOL_ERROR = \
-    "endpoints_shared must be a boolean, get {} instead"
+    "parameter `endpoints_shared` must be a boolean, get {} instead."
 POINTS_PER_ELEM_NOT_INT_ERROR = \
-    "points_per_elem must be an integer, get {} instead"
+    "parameter `points_per_elem` must be an integer, get {} instead."
 FLAT_NOT_EXPECTED_LENGTH_ENDPOINTS_SHARED_TRUE_ERROR = \
-    "flat must have length = n_elem * (m - 1) + m if endpoints_shared = True, get length={}, n_elem={} instead"
+    "parameter `flat` must have length = n_elem * (m - 1) + m if endpoints_shared = True, get length={}, n_elem={} instead."
 FLAT_NOT_EXPECTED_LENGTH_ENDPOINTS_SHARED_FALSE_ERROR = \
-    "flat must have length = n_elem * m if endpoints_shared = False, get length={}, n_elem={} instead"
+    "parameter `flat` must have length = n_elem * m if endpoints_shared = False, get length={}, n_elem={} instead."
 
 # error messages for class LagrangeShapeFunctions
 X_NODE_NOT_NUMPY_ARRAY_ERROR = \
-    "x_node must be a numpy array, get {} instead"
+    "x_node must be a numpy array, get {} instead."
 X_NODE_NOT_AT_LEAST_2_ERROR = \
-    "x_node must have length >= 2, get {} instead"
+    "x_node must have length >= 2, get {} instead."
 X_NODE_NOT_1D_OR_2D_ARRAY_ERROR = \
-    "x_node must be a 1D or 2D numpy array, get dimension {} instead"
+    "x_node must be a 1D or 2D numpy array, get dimension {} instead."
 X_EVAL_NOT_NUMPY_ARRAY_ERROR = \
-    "x_eval must be a numpy array, get {} instead"
+    "x_eval must be a numpy array, get {} instead."
 X_EVAL_NOT_1D_OR_2D_ARRAY_ERROR = \
-    "x_eval must be a 1D or 2D numpy array, get dimension {} instead"
+    "x_eval must be a 1D or 2D numpy array, get dimension {} instead."
 X_EVAL_NOT_AT_LEAST_1_ERROR = \
-    "x_eval must have length >= 1, get {} instead"
+    "x_eval must have length >= 1, get {} instead."
 X_NODE_AND_X_EVAL_NOT_THE_SAME_SHAPE_ERROR = \
-    "x_node and x_eval must have the same shape, get dimension {} and {} instead"
+    "x_node and x_eval must have the same shape, get dimension {} and {} instead."
 
+
+# Deprecated arguments warning messages
+FINITE_ELEMENTS_NUM_DEPRECATED_WARNING = \
+    "WARNING: parameter 'finite_elements_num' is now deprecated, use 'finite_elements_number' instead."
 
 
 
@@ -137,6 +151,89 @@ class Quadrature1D:
         index = np.arange(nodes.size)
         legendre_weights = 2*(eigvecs[0, index])**2
         return nodes, legendre_weights
+
+
+    
+    @staticmethod
+    def gauss_legendre_on_interval(
+        n       : int,
+        min_val : float = -1.0,
+        max_val : float = 1.0,
+        tol     : float = 1e-13,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        r"""
+        Gauss-Legendre quadrature on a general interval [min_val, max_val] using
+        classic Newton iteration for Legendre polynomial roots.
+
+            \int_{min_val}^{max_val} f(x) dx ≈ \sum_{i=1}^n w_i f(x_i)
+
+        Parameters
+        ----------
+        n : int
+            Number of quadrature points.
+        min_val, max_val : float
+            Interval endpoints (min_val < max_val).
+        tol : float
+            Tolerance for Newton iteration on the Legendre roots.
+
+        Returns
+        -------
+        mesh : np.ndarray
+            Quadrature nodes on [min_val, max_val].
+        weights : np.ndarray
+            Corresponding quadrature weights.
+        """
+
+        # basic type / value checks (keep style consistent with other quadrature routines)
+        assert isinstance(n, int), \
+            QUADRATURE_POINT_NUMBER_NOT_INTEGER_ERROR.format(type(n))
+        assert n > 0, \
+            QUADRATURE_POINT_NUMBER_NOT_GREATER_THAN_0_ERROR.format(n)
+        if not isinstance(min_val, (int, float)):
+            raise TypeError(
+                INTERVAL_ENDPOINT_NOT_REAL_NUMBER_ERROR.format('min_val', type(min_val))
+            )
+        if not isinstance(max_val, (int, float)):
+            raise TypeError(
+                INTERVAL_ENDPOINT_NOT_REAL_NUMBER_ERROR.format('max_val', type(max_val))
+            )
+        if not (max_val > min_val):
+            raise ValueError(
+                INTERVAL_ENDPOINT_MAX_NOT_GREATER_THAN_MIN_ERROR.format(min_val, max_val)
+            )
+        if tol <= 0:
+            raise ValueError(
+                TOLERANCE_NOT_POSITIVE_ERROR.format(tol)
+            )
+
+        # Keep internal variable names and algorithm consistent with legacy implementation
+        tolerance = tol
+        number = n
+
+        length = (max_val - min_val) / 2
+        mean = (max_val + min_val) / 2
+        mesh = np.zeros(number)
+        weights = np.zeros(number)
+        for index in range(1, int(np.floor((number + 1) / 2))+1):
+            z = np.cos(np.pi * (index - 0.25) / (number + 0.5))
+            flag = True
+            while flag:
+                p1 = 1.0
+                p2 = 0.0
+                for j in range(1, number + 1):
+                    p3 = p2
+                    p2 = p1
+                    p1 = ((2.0 * j - 1.0) * z * p2 - (j - 1.0) * p3) / j
+                pp = number * (p2 - z * p1) / (1.0 - z * z)
+                z1 = z
+                z = z1 - p1 / pp
+                flag = (abs(z - z1) > tolerance)
+            mesh[index - 1] = mean - length * z
+            mesh[number - index] = mean + length * z
+            weights[index - 1] = 2 * length / ((1.0 - z * z) * (pp * pp))
+            weights[number - index] = weights[index - 1]
+        return mesh, weights
+
 
 
     @staticmethod
@@ -177,32 +274,41 @@ class Quadrature1D:
 
 
 class Mesh1D:
-    """1D radial mesh on [0, 2R] with uniform / polynomial / exponential spacing."""
+    """1D radial mesh on [0, domain_size] with uniform / polynomial / exponential spacing."""
 
     def __init__(
         self,
-        domain_radius       : float,            # extent of radial domain, in Bohr
-        finite_elements_num : int,              # number of finite elements
-        mesh_type           : str,              # 'uniform', 'polynomial', 'exponential'
-        clustering_param    : float | None,     # concentration parameter for node distribution
-        exp_shift           : float | None,     # shift parameter for exponential distribution
-        ):
+        domain_size            : float,                 # extent of radial domain, in Bohr
+        finite_elements_number : int,                   # number of finite elements
+        mesh_type              : str,                   # 'uniform', 'polynomial', 'exponential'
+        clustering_param       : float | None,          # concentration parameter 'for' node distribution
+        exp_shift              : float | None  = None,  # shift parameter 'for' exponential distribution
 
-        self.R = float(domain_radius)
-        self.n_elem = finite_elements_num
-        self.mesh_type = mesh_type
+        # Deprecated parameters
+        finite_elements_num    : Optional[int] = None,  # Deprecated: use finite_elements_number instead
+    ):
+
+        if finite_elements_num is not None:
+            if finite_elements_number is not None:
+                raise ValueError("Both 'finite_elements_num' and 'finite_elements_number' are provided, please only use one of them.")
+            finite_elements_number = finite_elements_num
+            # Decided not to raise warnings here
+            # print(FINITE_ELEMENTS_NUM_DEPRECATED_WARNING.format(finite_elements_num))
+
+        self.domain_size   = float(domain_size)
+        self.n_elem        = finite_elements_number
+        self.mesh_type     = mesh_type
         self.concentration = clustering_param
-        self.exp_shift = exp_shift
-
+        self.exp_shift     = exp_shift
         self.check_initial_parameters()
 
 
     def check_initial_parameters(self):
-        # domain radius
-        assert isinstance(self.R, float), \
-            DOMAIN_RADIUS_NOT_FLOAT_ERROR.format(type(self.R))
-        assert self.R > 0., \
-            DOMAIN_RADIUS_NOT_GREATER_THAN_0_ERROR.format(self.R)
+        # domain size
+        assert isinstance(self.domain_size, float), \
+            DOMAIN_SIZE_NOT_FLOAT_ERROR.format(type(self.domain_size))
+        assert self.domain_size > 0., \
+            DOMAIN_SIZE_NOT_GREATER_THAN_0_ERROR.format(self.domain_size)
         
         # number of finite elements
         assert isinstance(self.n_elem, int), \
@@ -216,7 +322,7 @@ class Mesh1D:
         assert self.mesh_type in ['uniform', 'polynomial', 'exponential'], \
             MESH_TYPE_NOT_IN_VALID_LIST_ERROR.format(['uniform', 'polynomial', 'exponential'], self.mesh_type)
         
-        # clustering parameter
+        # clustering parameter 
         if self.mesh_type in ['polynomial', 'exponential']:
             assert isinstance(self.concentration, float), \
                 CLUSTERING_PARAMETER_NOT_FLOAT_ERROR.format(type(self.concentration))
@@ -228,9 +334,9 @@ class Mesh1D:
             if self.concentration is not None:
                 print(CLUSTERING_PARAMETER_NOT_NONE_FOR_UNIFORM_MESH_TYPE_WARNING)
         else:
-            raise ValueError("This error should never be raised")
+            raise ValueError("This error should never be raised.")
 
-        # exp_shift parameter
+        # exp_shift parameter 
         if self.mesh_type == 'exponential':
             if self.exp_shift is None:
                 self.exp_shift = 0.0  # default value
@@ -242,39 +348,39 @@ class Mesh1D:
             if self.exp_shift is not None:
                 print(EXP_SHIFT_NOT_NONE_FOR_UNIFORM_AND_POLYNOMIAL_MESH_TYPE_WARNING)
         else:
-            raise ValueError("This error should never be raised")
+            raise ValueError("This error should never be raised.")
 
 
     def generate_mesh_nodes_and_width(self) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Generate mesh nodes in [0, 2R] for uniform, polynomial, and exponential distributions.
+        Generate mesh nodes in [0, domain_size] for uniform, polynomial, and exponential distributions.
         For polynomial and exponential distributions, the nodes are distributed according to the clustering parameter (s or a) and exp_shift (c).
 
         Mesh types:
         - Uniform
-            r_i = i * (2R) / n_elem
+            r_i = i * domain_size / n_elem
         - Polynomial:
-            r_i = 2R * (i**s) / (n_elem ** s)
+            r_i = domain_size * (i**s) / (n_elem ** s)
         - Exponential:
-            r_i = c + (2R-c) * (a**(i/(n_elem-1)) - 1) / (a**(n_elem/(n_elem-1)) - 1)
+            r_i = c + (domain_size-c) * (a**(i/(n_elem-1)) - 1) / (a**(n_elem/(n_elem-1)) - 1)
         
         Returns:
-            mesh_nodes: array of mesh nodes r in [0, 2R]
+            mesh_nodes: array of mesh nodes r in [0, domain_size]
             mesh_width: array of mesh widths
         """
         if self.mesh_type == "uniform":
-            mesh_nodes = np.linspace(0.0, 2.0 * self.R, self.n_elem + 1)
+            mesh_nodes = np.linspace(0.0, self.domain_size, self.n_elem + 1)
         elif self.mesh_type == "polynomial":
             s = float(self.concentration)
-            mesh_nodes = 2.0 * self.R * (np.arange(self.n_elem+1)**s) / (self.n_elem ** s)
+            mesh_nodes = self.domain_size * (np.arange(self.n_elem+1)**s) / (self.n_elem ** s)
         elif self.mesh_type == "exponential":
             a = float(self.concentration)
             c = float(self.exp_shift)
             beta = np.log(a) / (self.n_elem - 1)
-            alpha = (2.0 * self.R - c) / (np.exp(beta*self.n_elem) - 1.0)
-            mesh_nodes = c + alpha * (np.exp(beta*np.arange(self.n_elem+1)) - 1.0)
+            alpha = (self.domain_size - c) / (np.exp(beta*self.n_elem) - 1.0)
+            mesh_nodes = c + alpha * (np.exp(beta*np.arange(self.n_elem + 1)) - 1.0)
             mesh_nodes[0]  = 0.0 
-            mesh_nodes[-1] = 2.0 * self.R
+            mesh_nodes[-1] = self.domain_size
         else:
             raise ValueError(f"Unknown mesh_type={self.mesh_type}")
         
@@ -304,7 +410,7 @@ class Mesh1D:
         Returns
         -------
         global_nodes : np.ndarray, shape (num_elements * poly_order + 1,)
-            Concatenated FE nodes over [0,2R] without duplicate interface nodes.
+            Concatenated FE nodes over [0, domain_size] without duplicate interface nodes.
         """
         assert isinstance(boundaries_nodes, np.ndarray), \
             BOUNDARIES_NODES_NOT_NUMPY_ARRAY_ERROR
@@ -395,8 +501,9 @@ class Mesh1D:
         # extra midpoint near left boundary
         refined_nodes = np.insert(refined_nodes, 1, 0.5*(refined_nodes[0] + refined_nodes[1]))
 
-        # extra midpoint near right boundary
-        refined_nodes = np.insert(refined_nodes, len(refined_nodes)-1, 0.5*(refined_nodes[-1] + refined_nodes[-2]))
+        # # extra midpoint near right boundary
+        # In the latest implementation, we don't need to add extra midpoint near right boundary
+        # refined_nodes = np.insert(refined_nodes, len(refined_nodes)-1, 0.5*(refined_nodes[-1] + refined_nodes[-2]))
 
         # flip to descending order (optional, to match legacy FE codes)
         if monotonically_increasing_flag:
@@ -411,7 +518,7 @@ class Mesh1D:
         interp_nodes     : np.ndarray,
         interp_weights   : np.ndarray,
         flatten          : bool = True,
-        ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Affine-map Gauss-Legendre (or any reference) quadrature nodes/weights from [-1,1]
         to each physical element [x_i, x_{i+1}] and return global points/weights.
@@ -481,10 +588,10 @@ class Mesh1D:
 
     @staticmethod
     def fe_flat_to_block2d(
-        flat: np.ndarray,
-        n_elem: int,
+        flat   : np.ndarray,
+        n_elem : int,
         endpoints_shared: bool,
-        ) -> np.ndarray:
+    ) -> np.ndarray:
 
         r"""
         Convert a 1D concatenated FE grid into a 2D array of shape (n_elem, m),
@@ -595,7 +702,7 @@ class LagrangeShapeFunctions:
 
 
     @staticmethod
-    def lagrange_basis_and_derivatives(x_node: np.ndarray, x_eval: np.ndarray, atol: float = 1e-12) -> Tuple[np.ndarray, np.ndarray]:
+    def lagrange_basis_and_derivatives(x_node: np.ndarray, x_eval: np.ndarray, atol: float = 1e-20) -> Tuple[np.ndarray, np.ndarray]:
         r"""
         Compute Lagrange basis values and their first derivatives on each FE element,
         fully vectorized over elements, evaluation points, and basis indices.
@@ -685,7 +792,7 @@ class LagrangeShapeFunctions:
         dx = x_eval[:, :, None] - x_node[:, None, :]                          # (n_elem, n_eval, n_node)
 
         # 3) Identify nodal evaluations (x == x_k) using absolute tolerance
-        is_nodal = np.isclose(x_eval[:, :, None], x_node[:, None, :], atol=atol)  # (n_elem, n_eval, n_node)
+        is_nodal = np.isclose(x_eval[:, :, None], x_node[:, None, :], atol=atol, rtol=0.0)  # (n_elem, n_eval, n_node)
         has_nodal_row = is_nodal.any(axis=2)                                      # (n_elem, n_eval)
 
         # 4) Basis values at non-nodal points via barycentric formula
@@ -736,8 +843,8 @@ class LagrangeShapeFunctions:
     def lagrange_basis_and_derivatives_old(
         x_node: np.ndarray,
         x_eval: np.ndarray,
-        atol: float = 1e-12
-        ) -> Tuple[np.ndarray, np.ndarray]:
+        atol: float = 1e-20
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Old-style algorithm that mirrors the legacy implementation's math:
         - build (x - x_k) slabs and take products
@@ -909,7 +1016,7 @@ class LagrangeShapeFunctions:
 
 
 class RPAFrequencyGrid:
-    """
+    r"""
     Frequency integration grid for RPA correlation energy calculations.
     
     Transforms Gauss-Legendre quadrature from [-1,1] to [0, \infty) for imaginary
@@ -923,7 +1030,7 @@ class RPAFrequencyGrid:
         self,
         n_frequency_points: int,
         frequency_scale: float = 2.5
-        ):
+    ):
         """
         Initialize RPA frequency grid generator.
         
@@ -964,7 +1071,7 @@ class RPAFrequencyGrid:
     def generate_smoothing_grid(self,
         n_smoothing_points: int,
         smoothing_cutoff: float
-        ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Generate low-frequency smoothing grid [0, cutoff].
         
@@ -1014,8 +1121,6 @@ if __name__ == "__main__":
     # nodes, legendre_weights = Quadrature1D.gauss_legendre(95)
     # print("legendre_weights: \n", legendre_weights)
     # print("nodes: \n", nodes)
-    
-    
     
     print(Mesh1D.map_quadrature_to_physical_elements(
         boundaries_nodes=np.array([0.0, 1.0, 2.0, 3.0]), 

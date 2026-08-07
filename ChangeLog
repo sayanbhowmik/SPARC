@@ -4,6 +4,18 @@
 -changes
 
 --------------
+August 06, 2026
+Name: Qihao Cheng
+Changes: utils/pdos/, utils/atom/
+1. Added collinear spin-polarized PDOS support (SPIN_TYP = 0/1); noncollinear not supported.
+2. Spin-resolved outputs: DOS_up/down, PDOS_up/down, and combined DOS.txt (up, down, tot).
+3. Added Si2_nmag / Si2_nmag_spin examples for checking unpolarized vs up+down agreement.
+4. Updated PDOS README for spin usage and outputs.
+5. Fixed PDOS BC parsing so filenames containing "BCC" are not mistaken for the BC tag.
+6. Synced utils/atom with the latest SPARC-atomSFE sources (data/, ml_xc/, HF, response, etc.) and added an in-tree README/logo.
+7. Updated the PDOS Default atomic-orbital path for the new atom API (verbose, evaluate_basis_on_uniform_grid, n_l_orbitals layout).
+
+--------------
 July 23, 2026
 Name: Sayan Bhowmik
 Changes: doc/.Latex/System.tex, doc/Manual.pdf

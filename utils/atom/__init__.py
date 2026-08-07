@@ -1,5 +1,5 @@
 """
-Atomic DFT Solver Package
+SPARC-atomSFE Atomic DFT Solver Package
 
 This package provides a comprehensive implementation of Atomic Density Functional Theory
 solver using finite element method.
@@ -8,7 +8,7 @@ Main class:
     AtomicDFTSolver: Main solver class for atomic DFT calculations
 
 Example:
-    >>> from delta.atomic_dft import AtomicDFTSolver
+    >>> from atom import AtomicDFTSolver
     >>> solver = AtomicDFTSolver(atomic_number=13, xc_functional="GGA_PBE")
     >>> results = solver.solve()
 """
@@ -56,20 +56,20 @@ def _threadpoolctl_installed() -> bool:
 
 _THREADPOOLCTL_INSTALLED = _threadpoolctl_installed()
 
-# Force MKL / OpenBLAS into single-thread mode without any extra dependency.
-if not _BLAS_ENV_SINGLE_THREADED:
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
-else:
-    # Do not override user settings when NumPy is already loaded.
-    pass
+# BLAS/OpenMP thread counts are NOT forced here: whatever the environment says is
+# what the run uses.  _BLAS_ENV_SINGLE_THREADED and _THREADPOOLCTL_INSTALLED are
+# still recorded above, for the parallel sections to report on.
 
 
 
-# Main solver class
-from .solver import AtomicDFTSolver
-
-# Make AtomicDFTSolver easily accessible
+# Lazy import: solver is only loaded when AtomicDFTSolver is actually used.
+# (ML-XC is not wired through the public solver API in this fork, so importing the solver
+# no longer pulls torch via ml_xc unless lower-level modules import it.)
 __all__ = ["AtomicDFTSolver"]
+
+
+def __getattr__(name: str):
+    if name == "AtomicDFTSolver":
+        from .solver import AtomicDFTSolver
+        return AtomicDFTSolver
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

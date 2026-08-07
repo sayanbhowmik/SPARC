@@ -8,16 +8,39 @@ from .read_pseudopotential import read_pseudopotential_file
 
 __all__ = ["LocalPseudopotential"]
 
+
+
+Z_NUCLEAR_NOT_INTEGER_OR_FLOAT_ERROR = \
+    "parameter 'z_nuclear' must be a integer or float, get {} instead."
+Z_NUCLEAR_NOT_GREATER_THAN_0_OR_LESS_THAN_93_ERROR = \
+    "parameter 'z_nuclear' must be greater than 0 and less than 93 (1-92), get {} instead."
+Z_NUCLEAR_NOT_INTEGER_VALUED_FOR_PSEUDOPOTENTIAL_CALCULATION_ERROR = \
+    "parameter 'z_nuclear' must be integer-valued for pseudopotential calculations, get {} instead."
+Z_VALENCE_NOT_INTEGER_OR_FLOAT_ERROR = \
+    "parameter 'z_valence' must be a integer or float, get {} instead."
+Z_VALENCE_NOT_GREATER_THAN_0_OR_LESS_THAN_93_ERROR = \
+    "parameter 'z_valence' must be greater than 0 and less than 93 (1-92), get {} instead."
+N_ELECTRONS_NOT_INTEGER_OR_FLOAT_ERROR = \
+    "parameter 'n_electrons' must be an integer or float, get {} instead."
+N_ELECTRONS_NOT_GREATER_THAN_0_ERROR = \
+    "parameter 'n_electrons' must be greater than 0, get {} instead."
+CHARGE_SYSTEMS_NOT_SUPPORTED_FOR_PSEUDOPOTENTIAL_CALCULATION_ERROR = \
+    "Charged systems are not supported with pseudopotentials. Use all-electron calculations for non-neutral systems."
+ALL_ELECTRON_FLAG_NOT_BOOL_ERROR = \
+    "parameter 'all_electron_flag' must be a boolean, get {} instead."
+
+
 PSEUDOPOTENTIAL_PATH_NOT_PROVIDED_ERROR = \
-    "Pseudopotential path must be provided"
+    "Pseudopotential path must be provided."
 PSEUDOPOTENTIAL_FILENAME_NOT_PROVIDED_ERROR = \
-    "Pseudopotential filename must be provided"
+    "Pseudopotential filename must be provided."
 PSEUDOPOTENTIAL_PATH_DOES_NOT_EXIST_ERROR = \
-    "Pseudopotential path {} does not exist"
+    "Pseudopotential path {} does not exist."
 PSEUDOPOTENTIAL_FILENAME_DOES_NOT_EXIST_ERROR = \
-    "Pseudopotential filename {} does not exist"
+    "Pseudopotential filename {} does not exist."
 R_NODES_MUST_BE_MONOTONICALLY_INCREASING_AND_NON_NEGATIVE_ERROR = \
-    "r_nodes must be monotonically increasing and non-negative"
+    "r_nodes must be monotonically increasing and non-negative."
+
 
 class LocalPseudopotential:
     """
@@ -29,16 +52,20 @@ class LocalPseudopotential:
     """
 
     def __init__(self, 
-        atomic_number: int,
-        path: Optional[str] = None, 
-        filename: Optional[str] = None):
+        atomic_number : float | int,
+        n_electrons   : float | int,
+        path          : Optional[str] = None, 
+        filename      : Optional[str] = None
+    ):
         """
         Initialize local pseudopotential.
         
         Parameters
         ----------
-        atomic_number : int
-            Atomic number of the element
+        atomic_number : float | int
+            Atomic number of the element, can be fractional
+        n_electrons : float | int
+            Number of electrons in the system, can be fractional
         path : str, optional
             Path to pseudopotential files directory
         filename : str, optional
@@ -47,35 +74,74 @@ class LocalPseudopotential:
 
         # Initialize attributes
         if path is not None and filename is not None:
+            # Pseudopotential calculations
             self.all_electron = False
+            self.n_electrons  = n_electrons
             self.load(path, filename)
-            self.u_local = 1.0
-            self.u_non_local = 1.0
-            self.load_psp = True
+            self.load_psp     = True
         else:
+            # All-electron calculations
             self.all_electron = True
-            self.z_valence = atomic_number
-            self.z_nuclear = atomic_number
-            self.u_local = 0.0
-            self.u_non_local = 0.0
-            self.load_psp = False
+            self.n_electrons  = n_electrons
+            self.z_valence    = atomic_number
+            self.z_nuclear    = atomic_number
+            self.load_psp     = False
+        
+        # Basic sanity checks, for parameters 'atomic_number', 'n_electrons' and 'all_electron'
+        self._check_initial_parameters()
+
+
+    def _check_initial_parameters(self):
+        """
+        Check initial parameters, same as the ones in solver.py
+        """
+        # Z_valence
+        assert isinstance(self.z_valence, (float, int)), \
+            Z_VALENCE_NOT_INTEGER_OR_FLOAT_ERROR.format(type(self.z_valence))
+        assert self.z_valence > 0 and self.z_valence < 93, \
+            Z_VALENCE_NOT_GREATER_THAN_0_OR_LESS_THAN_93_ERROR.format(self.z_valence)
+
+
+        # Z_nuclear
+        assert isinstance(self.z_nuclear, (float, int)), \
+            Z_NUCLEAR_NOT_INTEGER_OR_FLOAT_ERROR.format(type(self.z_nuclear))
+        assert self.z_nuclear > 0 and self.z_nuclear < 93, \
+            Z_NUCLEAR_NOT_GREATER_THAN_0_OR_LESS_THAN_93_ERROR.format(self.z_nuclear)
+
+
+        # n_electrons
+        assert isinstance(self.n_electrons, (float, int)), \
+            N_ELECTRONS_NOT_INTEGER_OR_FLOAT_ERROR.format(type(self.n_electrons))
+        assert self.n_electrons > 0, \
+            N_ELECTRONS_NOT_GREATER_THAN_0_ERROR.format(self.n_electrons)
+
+
+        # all electron flag
+        assert isinstance(self.all_electron, bool), \
+            ALL_ELECTRON_FLAG_NOT_BOOL_ERROR.format(type(self.all_electron))
+        if not self.all_electron:
+            if self.n_electrons != self.z_nuclear:
+                raise ValueError(CHARGE_SYSTEMS_NOT_SUPPORTED_FOR_PSEUDOPOTENTIAL_CALCULATION_ERROR)
+            if not self.z_nuclear.is_integer():
+                raise ValueError(Z_NUCLEAR_NOT_INTEGER_VALUED_FOR_PSEUDOPOTENTIAL_CALCULATION_ERROR.format(self.z_nuclear))
+
 
 
     @staticmethod
-    def thomas_fermi_density_guess(z_valence: float, r_nodes: np.ndarray) -> np.ndarray:
+    def thomas_fermi_density_guess(n_electrons: float, r_nodes: np.ndarray) -> np.ndarray:
         """
         Thomas-Fermi approximation for all-electron density guess
         Based on screening model with empirical fitting parameters
         """
         # Compute scaled radial coordinate for Thomas-Fermi model
         # x = r * k_TF where k_TF is the Thomas-Fermi wave vector
-        thomas_fermi_prefactor = (128 * z_valence / (9 * np.pi**2))**(1/3)
+        thomas_fermi_prefactor = (128 * n_electrons / (9 * np.pi**2))**(1/3)
         r_scaled = r_nodes * thomas_fermi_prefactor
         
         # Empirical fitting parameters for effective charge screening
         # From quantum Monte Carlo or DFT fitting
-        screening_alpha = 0.7280642371   # Primary screening parameter
-        screening_beta = -0.5430794693   # Secondary screening parameter  
+        screening_alpha = 0.7280642371   # Primary screening parameter 
+        screening_beta = -0.5430794693   # Secondary screening parameter 
         screening_gamma = 0.3612163121   # Decay parameter
         
         # Compute effective nuclear charge with screening corrections
@@ -85,7 +151,7 @@ class LocalPseudopotential:
             1 + screening_alpha * sqrt_r_scaled 
             + screening_beta * r_scaled * np.exp(-screening_gamma * sqrt_r_scaled)
         )
-        z_effective = z_valence * screening_correction**2 * np.exp(-2 * screening_alpha * sqrt_r_scaled)
+        z_effective = n_electrons * screening_correction**2 * np.exp(-2 * screening_alpha * sqrt_r_scaled)
         
         # Compute initial potential: V(r) = -Z_eff / r
         v_coulomb_screened = -z_effective / r_nodes
@@ -117,7 +183,8 @@ class LocalPseudopotential:
             raise ValueError(R_NODES_MUST_BE_MONOTONICALLY_INCREASING_AND_NON_NEGATIVE_ERROR)
         
         if self.all_electron:
-            return self.thomas_fermi_density_guess(self.z_valence, r_nodes)
+            # For all-electron calculations, use Thomas-Fermi density guess
+            return self.thomas_fermi_density_guess(self.n_electrons, r_nodes)
         else:
             # Interpolate the density guess from pseudopotential data
             # For r < r_cutoff: use cubic spline interpolation
@@ -189,8 +256,6 @@ class LocalPseudopotential:
             
             return rho_nlcc
  
-
-
 
     def get_v_local_component_psp(self, r_nodes: np.ndarray) -> np.ndarray:
         """
@@ -269,7 +334,7 @@ class LocalPseudopotential:
         psp_data = read_pseudopotential_file(
             psp_dir_path  = path,
             psp_file_name = filename,
-            print_debug   = False
+            verbose       = False
         )
         
         # Unpack pseudopotential data (keep original variable names for reference)
@@ -278,48 +343,48 @@ class LocalPseudopotential:
          pspsoc, Potso, rc_max_list) = psp_data
         
         # Store atomic charge information
-        self.z_valence          = Z                  # Z: Valence charge (for pseudopotential Coulomb tail)
-        self.z_nuclear          = Zatom              # Zatom: True nuclear charge of the atom
-        self.xc_functional      = XC                 # XC: Exchange-correlation functional identifier
+        self.z_valence             = float(Z)           # Z: Valence charge (for pseudopotential Coulomb tail)
+        self.z_nuclear             = float(Zatom)       # Zatom: True nuclear charge of the atom
+        self.xc_functional         = XC                 # XC: Exchange-correlation functional identifier
 
         # Store local pseudopotential data
-        self.v_local_values     = Vloc               # Vloc: Local pseudopotential values on radial grid
-        self.r_grid_local       = r_grid_vloc        # r_grid_vloc: Radial grid points for local potential
-        self.r_core_cutoff      = rc                 # rc: Core radius cutoff for pseudopotential
+        self.v_local_values        = Vloc               # Vloc: Local pseudopotential values on radial grid
+        self.r_grid_local          = r_grid_vloc        # r_grid_vloc: Radial grid points for local potential
+        self.r_core_cutoff         = rc                 # rc: Core radius cutoff for pseudopotential
 
         # Store non-local pseudopotential data
-        self.nonlocal_projectors = Pot               # Pot: Non-local projector functions for each angular momentum l
-        self.n_projectors_per_l = nproj              # nproj: Number of projectors for each l channel
+        self.nonlocal_projectors   = Pot                # Pot: Non-local projector functions for each angular momentum l
+        self.n_projectors_per_l    = nproj              # nproj: Number of projectors for each l channel
 
         # Store density-related data
-        self.r_grid_density     = r_grid_rho         # r_grid_rho: Radial grid for density guess
+        self.r_grid_density        = r_grid_rho         # r_grid_rho: Radial grid for density guess
         self.density_initial_guess = rho_isolated_guess # rho_isolated_guess: Initial atomic density for SCF guess
         
         # Store nonlinear core correction (NLCC) data
-        self.density_nlcc       = rho_tilde          # rho_tilde: Core electron density for NLCC
-        self.r_grid_nlcc        = r_grid_rho_tilde   # r_grid_rho_tilde: Radial grid for NLCC density
+        self.density_nlcc          = rho_tilde          # rho_tilde: Core electron density for NLCC
+        self.r_grid_nlcc           = r_grid_rho_tilde   # r_grid_rho_tilde: Radial grid for NLCC density
         
         # Store spin-orbit coupling data
-        self.has_spin_orbit     = pspsoc             # pspsoc: Spin-orbit coupling flag (0=no, 1=yes)
-        self.spin_orbit_projectors = Potso           # Potso: Spin-orbit coupling projector functions
+        self.has_spin_orbit        = pspsoc             # pspsoc: Spin-orbit coupling flag (0=no, 1=yes)
+        self.spin_orbit_projectors = Potso              # Potso: Spin-orbit coupling projector functions
         
         # Store cutoff radii information
-        self.r_cutoff_max_per_l = rc_max_list        # rc_max_list: Maximum cutoff radius for each l channel
+        self.r_cutoff_max_per_l    = rc_max_list        # rc_max_list: Maximum cutoff radius for each l channel
         
 
     def print_info(self):
         """
         Print pseudopotential information summary.
         """
-        print("=" * 60)
-        print("\t\t PSEUDOPOTENTIAL INFORMATION")
-        print("=" * 60)
-
+        print("===========================================================================")
+        print("                   PSEUDOPOTENTIAL INFORMATION                             ")
+        print("===========================================================================")
 
 
         # Basic atomic information
         print(f"  Valence Charge             (z_valence)             : {self.z_valence}")
         print(f"  Nuclear Charge             (z_nuclear)             : {self.z_nuclear}")
+        print(f"  Number of Electrons        (n_electrons)           : {self.n_electrons}")
         print()
 
         if self.load_psp:
@@ -359,6 +424,10 @@ class LocalPseudopotential:
                 print(f"  NLCC Density Range         (density_nlcc)          : [{np.min(self.density_nlcc):.6f}, {np.max(self.density_nlcc):.6f}]")
         
             print()
+
+
+
+
 
 
     def evaluate_on(self, r_quad: np.ndarray) -> np.ndarray:

@@ -5,15 +5,19 @@ Computes total energy and all components from converged SCF solution
 
 from __future__ import annotations
 import numpy as np
-from typing import Optional, Tuple, TYPE_CHECKING
+from typing import Optional, Tuple, TYPE_CHECKING, Any
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from ..xc.ml_xc import MLXCCalculator
+    from .density import DensityData
 
 from ..scf.driver import SwitchesFlags
 from ..mesh.operators import GridData
 from ..utils.occupation_states import OccupationInfo
 from ..scf.poisson import PoissonSolver
 from ..xc.evaluator import XCEvaluator, XCPotentialData
-from ..xc.hybrid import HartreeFockExchange
+from ..xc.hf import HartreeFockExchange
 from ..xc.oep import OEPCalculator
 from ..mesh.operators import RadialOperatorsBuilder
 from ..pseudo.local import LocalPseudopotential
@@ -21,53 +25,53 @@ from ..pseudo.non_local import NonLocalPseudopotential
 from .density import DensityCalculator
 
 
-if TYPE_CHECKING:
-    from .density import DensityData
-
-
 # Error messages
 DERIVATIVE_MATRIX_SHAPE_ERROR_MESSAGE = \
-    "parameter derivative_matrix's shape {shape} must match grid_data shape ({n_elem}, {n_quad}, {n_quad})"
-Z_NUCLEAR_NOT_PROVIDED_ERROR_MESSAGE = \
-    "parameter z_nuclear must be provided, get {z_nuclear} instead"
-V_LOCAL_PSP_NOT_PROVIDED_ERROR_MESSAGE = \
-    "parameter v_local_psp must be provided, get {v_local_psp} instead"
+    "parameter 'derivative_matrix''s shape {shape} must match grid_data shape ({n_elem}, {n_quad}, {n_quad})."
 INTEGRAND_NDIM_ERROR_MESSAGE = \
-    "Integrand should be one-dimensional, but got {ndim} dimensions"
+    "Integrand should be one-dimensional, but get {} dimensions."
 MIXING_PARAMETER_NOT_A_FLOAT_ERROR = \
-    "parameter mixing_parameter must be a float, get type {} instead"
+    "parameter 'mixing_parameter' must be a float, get type {} instead."
 MIXING_PARAMETER_NOT_IN_ZERO_ONE_ERROR = \
-    "parameter mixing_parameter must be in [0, 1], got {} instead"
+    "parameter 'mixing_parameter' must be in [0, 1], get {} instead."
 
 
 FULL_EIGEN_ENERGIES_NOT_NONE_ERROR_MESSAGE = \
-    "parameter `full_eigen_energies` must be not None, get None instead"
+    "parameter 'full_eigen_energies' must be not None, get None instead."
 FULL_ORBITALS_NOT_NONE_ERROR_MESSAGE = \
-    "parameter `full_orbitals` must be not None, get None instead"
+    "parameter 'full_orbitals' must be not None, get None instead."
 FULL_L_TERMS_NOT_NONE_ERROR_MESSAGE = \
-    "parameter `full_l_terms` must be not None, get None instead"
+    "parameter 'full_l_terms' must be not None, get None instead."
 
 
 SWITCHES_NOT_A_SWITCHESFLAGS_ERROR_MESSAGE = \
-    "parameter `switches` must be a SwitchesFlags instance, get {} instead"
+    "parameter 'switches' must be a SwitchesFlags instance, get {} instead."
 GRID_DATA_NOT_A_GRIDDATA_ERROR_MESSAGE = \
-    "parameter `grid_data` must be a GridData instance, get {} instead"
+    "parameter 'grid_data' must be a GridData instance, get {} instead."
 OCCUPATION_INFO_NOT_A_OCCUPATIONINFO_ERROR_MESSAGE = \
-    "parameter `occupation_info` must be a OccupationInfo instance, get {} instead"
+    "parameter 'occupation_info' must be a OccupationInfo instance, get {} instead."
 OPS_BUILDER_NOT_A_RADIALOPERATORSBUILDER_ERROR_MESSAGE = \
-    "parameter `ops_builder` must be a RadialOperatorsBuilder instance, get {} instead"
+    "parameter 'ops_builder' must be a RadialOperatorsBuilder instance, get {} instead."
 POISSON_SOLVER_NOT_A_POISSONSOLVER_ERROR_MESSAGE = \
-    "parameter `poisson_solver` must be a PoissonSolver instance, get {} instead"
+    "parameter 'poisson_solver' must be a PoissonSolver instance, get {} instead."
 PSEUDO_NOT_A_LOCALPSEUDOPOTENTIAL_ERROR_MESSAGE = \
-    "parameter `pseudo` must be a LocalPseudopotential instance, get {} instead"
+    "parameter 'pseudo' must be a LocalPseudopotential instance, get {} instead."
 XC_CALCULATOR_NOT_A_XCEVALUATOR_ERROR_MESSAGE = \
-    "parameter `xc_calculator` must be a XCEvaluator instance, get {} instead"
+    "parameter 'xc_calculator' must be a XCEvaluator instance, get {} instead."
 HF_CALCULATOR_NOT_A_HARTREEFOCKEXCHANGE_ERROR_MESSAGE = \
-    "parameter `hf_calculator` must be a HartreeFockExchange instance, get {} instead"
+    "parameter 'hf_calculator' must be a HartreeFockExchange instance, get {} instead."
 OEP_CALCULATOR_NOT_A_OEPCALCULATOR_ERROR_MESSAGE = \
-    "parameter `oep_calculator` must be a OEPCalculator instance, get {} instead"
+    "parameter 'oep_calculator' must be a OEPCalculator instance, get {} instead."
 DERIVATIVE_MATRIX_NOT_A_NDARRAY_ERROR_MESSAGE = \
-    "parameter `derivative_matrix` must be a np.ndarray instance, get {} instead"
+    "parameter 'derivative_matrix' must be a np.ndarray instance, get {} instead."
+
+
+# Warning messages
+MLXC_MODEL_KIND_POTENTIAL_WARNING = \
+    """
+    WARNING: Machine Learning Exchange-Correlation model predicts only potentials;
+        ML energy correction unavailable, so total energy is inaccurate
+    """
 
 
 @dataclass
@@ -86,8 +90,9 @@ class EnergyComponents:
     # Optional: advanced functionals and corrections
     nonlocal_psp    : float = 0.0  # E_nl (non-local pseudopotential)
     hf_exchange     : float = 0.0  # E_HF (Hartree-Fock exchange)
-    oep_exchange    : float = 0.0  # E_OEP (OEP exchange)
+    oep_exchange    : float = 0.0  # exact/HF (EXX) exchange via OEP calculator path (same energy as hf_exchange)
     rpa_correlation : float = 0.0  # E_RPA (RPA correlation)
+    ml_xc           : float = 0.0  # E_MLXC (ML XC energy correction)
     
     @property
     def total_kinetic(self) -> float:
@@ -99,7 +104,7 @@ class EnergyComponents:
         """Total potential energy"""
         return (self.external + self.nonlocal_psp + self.hartree + 
                 self.exchange + self.correlation + 
-                self.hf_exchange + self.oep_exchange + self.rpa_correlation)
+                self.hf_exchange + self.oep_exchange + self.rpa_correlation + self.ml_xc)
     
     @property
     def total(self) -> float:
@@ -110,35 +115,37 @@ class EnergyComponents:
     def print_info(self, title: str = "Energy Components"):
         """Print formatted energy information"""
         # Title
-        print(f"{'='*60}")
-        print(f"\t\t {title}")
-        print(f"{'='*60}")
+        print(f"===========================================================================")
+        print(f"{title.center(75)}")
+        print(f"===========================================================================")
 
         # Kinetic energy
-        print(f"\t Kinetic (radial)     : {self.kinetic_radial:16.8f} Ha")
-        print(f"\t Kinetic (angular)    : {self.kinetic_angular:16.8f} Ha")
-        print(f"\t Total Kinetic        : {self.total_kinetic:16.8f} Ha")
-        print(f"\t {'-'*42}")
+        print(f"\t\t Kinetic (radial)     : {self.kinetic_radial:19.11f} Ha")
+        print(f"\t\t Kinetic (angular)    : {self.kinetic_angular:19.11f} Ha")
+        print(f"\t\t Total Kinetic        : {self.total_kinetic:19.11f} Ha")
+        print(f"\t\t {'-'*45}")
 
         # External potential energy
-        print(f"\t External potential   : {self.external:16.8f} Ha")
+        print(f"\t\t External potential   : {self.external:19.11f} Ha")
 
-        print(f"\t Hartree              : {self.hartree:16.8f} Ha")
-        print(f"\t Exchange             : {self.exchange:16.8f} Ha")
-        print(f"\t Correlation          : {self.correlation:16.8f} Ha")
+        print(f"\t\t Hartree              : {self.hartree:19.11f} Ha")
+        print(f"\t\t Exchange             : {self.exchange:19.11f} Ha")
+        print(f"\t\t Correlation          : {self.correlation:19.11f} Ha")
         if abs(self.nonlocal_psp) > 1e-12:
-            print(f"\t Nonlocal PSP         : {self.nonlocal_psp:16.8f} Ha")
+            print(f"\t\t Nonlocal PSP         : {self.nonlocal_psp:19.11f} Ha")
         if abs(self.hf_exchange) > 1e-12:
-            print(f"\t HF Exchange          : {self.hf_exchange:16.8f} Ha")
+            print(f"\t\t HF Exchange          : {self.hf_exchange:19.11f} Ha")
         if abs(self.oep_exchange) > 1e-12:
-            print(f"\t OEP Exchange         : {self.oep_exchange:16.8f} Ha")
+            print(f"\t\t Exact exchange (HF)  : {self.oep_exchange:19.11f} Ha")
         if abs(self.rpa_correlation) > 1e-12:
-            print(f"\t RPA Correlation      : {self.rpa_correlation:16.8f} Ha")
-        print(f"\t Total Potential      : {self.total_potential:16.8f} Ha")
-        print(f"\t {'-'*42}")
+            print(f"\t\t RPA Correlation      : {self.rpa_correlation:19.11f} Ha")
+        if abs(self.ml_xc) > 1e-12:
+            print(f"\t\t ML Energy Correction : {self.ml_xc:19.11f} Ha")
+        print(f"\t\t Total Potential      : {self.total_potential:19.11f} Ha")
+        print(f"\t\t {'-'*45}")
 
         # Total energy
-        print(f"\t TOTAL ENERGY         : {self.total:16.8f} Ha")
+        print(f"\t\t TOTAL ENERGY         : {self.total:19.11f} Ha")
         print()
 
 
@@ -147,16 +154,17 @@ class EnergyCalculator:
     Computes total energy from converged Kohn-Sham solution
     
     Total energy:
-        E = T_s + E_ext + E_H + E_xc + E_HF + E_OEP + E_RPA
+        E = T_s + E_ext + E_H + E_xc + E_HF + E_EXX_oep + E_RPA + E_MLXC
     
     where:
         T_s = kinetic energy of non-interacting electrons
         E_ext = external potential energy (nuclear or pseudopotential)
         E_H = Hartree energy (classical electron-electron repulsion)
         E_xc = exchange-correlation energy
-        E_HF = Hartree-Fock exchange (optional)
-        E_OEP = OEP exchange (optional)
+        E_HF = Hartree-Fock exchange (optional, HF code path)
+        E_EXX_oep = exact/HF exchange when using the OEP calculator (same formula as E_HF; optional)
         E_RPA = RPA correlation (optional)
+        E_MLXC = ML XC energy correction (optional)
     """
     
     def __init__(
@@ -170,8 +178,11 @@ class EnergyCalculator:
         xc_calculator     : Optional[XCEvaluator]         = None,
         hf_calculator     : Optional[HartreeFockExchange] = None,
         oep_calculator    : Optional[OEPCalculator]       = None,
+        rpa_calculator    : Optional[Any]                 = None,   # standalone RPACorrelation, 'RPA@DFT' only
+        ml_xc_calculator  : Optional["MLXCCalculator"]    = None,
         derivative_matrix : Optional[np.ndarray]          = None,
-        ):
+        density_calculator: Optional["DensityCalculator"] = None,
+    ):
         """
         Parameters
         ----------
@@ -194,12 +205,17 @@ class EnergyCalculator:
             HF exchange calculator for hybrid functionals
             Should be the same instance as used in SCFDriver
         oep_calculator : OEPCalculator, optional
-            OEP exchange calculator for OEP exchange functional
+            OEP calculator (exact exchange energy = HF/EXX; OEP applies to the exchange potential)
+            Should be the same instance as used in SCFDriver
+        ml_xc_calculator : MLXCCalculator, optional
+            ML XC calculator for ML XC energy correction
             Should be the same instance as used in SCFDriver
         derivative_matrix : np.ndarray, optional
             Derivative matrix for kinetic energy computation
             Note: If None, uses ops_builder.derivative_matrix.
                   If provided, should be from dense grid for more accurate results.
+        density_calculator : DensityCalculator, optional
+            For ML XC feature construction (grad_rho, lap_rho, etc.)
         """
         assert isinstance(grid_data, GridData), \
             GRID_DATA_NOT_A_GRIDDATA_ERROR_MESSAGE.format(type(grid_data))
@@ -214,6 +230,11 @@ class EnergyCalculator:
         self.xc_calculator      = xc_calculator
         self.hf_calculator      = hf_calculator
         self.oep_calculator     = oep_calculator
+        # Non-self-consistent RPA carries its own RPACorrelation instead of the mixin
+        # that OEPCalculator provides; see SCFDriver._initialize_rpa_calculator.
+        self.rpa_calculator     = rpa_calculator
+        self.ml_xc_calculator   = ml_xc_calculator
+        self.density_calculator = density_calculator
         self._check_initialization()
 
 
@@ -284,7 +305,7 @@ class EnergyCalculator:
         full_orbitals          : Optional[np.ndarray] = None,
         full_l_terms           : Optional[np.ndarray] = None,
         enable_parallelization : Optional[bool]       = None,
-        ) -> EnergyComponents:
+    ) -> EnergyComponents:
         """
         Compute total energy from converged SCF solution
         
@@ -320,9 +341,9 @@ class EnergyCalculator:
         """
         if mixing_parameter is not None:
             assert isinstance(mixing_parameter, float), \
-                "mixing_parameter must be a float, get type {} instead".format(type(mixing_parameter))
+                "parameter 'mixing_parameter' must be a float, get type {} instead.".format(type(mixing_parameter))
             assert 0.0 <= mixing_parameter <= 1.0, \
-                "mixing_parameter must be in [0, 1], got {}".format(mixing_parameter)
+                "parameter 'mixing_parameter' must be in [0, 1], get {}.".format(mixing_parameter)
 
         # 1. Kinetic energy
         T_radial, T_angular = self._compute_kinetic_energy(orbitals, self.derivative_matrix)
@@ -343,22 +364,33 @@ class EnergyCalculator:
         # 6. Hartree-Fock exchange energy (if HF calculator is available)
         E_hf_exchange = self._compute_hf_exchange_energy(orbitals)
 
-        # 7. OEP exchange energy (if OEP calculator is available)
+        # 7. Exact/HF exchange energy via OEP calculator (if enabled)
         E_oep_exchange = self._compute_oep_exchange_energy(orbitals)
         
-        # 8. Advanced energy terms (placeholders for future implementation)
+        # 8. RPA correlation energy (if OEP calculator is available)
         E_rpa_correlation = self._compute_rpa_correlation_energy(
             full_eigen_energies    = full_eigen_energies,
             full_orbitals          = full_orbitals,
             full_l_terms           = full_l_terms,
             enable_parallelization = enable_parallelization,
         )
+        # 9. ML XC energy (if ML XC calculator is available)
+        E_ml_xc = self._compute_ml_xc_energy(density_data)
 
         if mixing_parameter is not None:
             E_x *= (1.0 - mixing_parameter)
-            E_hf_exchange *= mixing_parameter
-            E_oep_exchange *= mixing_parameter
+            E_hf_exchange *= mixing_parameter 
+            E_oep_exchange *= mixing_parameter 
 
+        # Non-self-consistent RPA: the ground-state functional supplies the orbitals, but
+        # the reported energy is  E_x^EXX + E_c^RPA  in place of  E_x^ref + E_c^ref.
+        # Both local pieces are zeroed rather than dropped so total_potential -- which
+        # sums exchange + correlation + hf_exchange + rpa_correlation -- stays correct
+        # without touching EnergyComponents.
+        if self.switches.use_post_scf_rpa:
+            E_x = 0.0
+            E_c = 0.0
+        
         return EnergyComponents(
             kinetic_radial  = T_radial,
             kinetic_angular = T_angular,
@@ -369,7 +401,8 @@ class EnergyCalculator:
             nonlocal_psp    = E_nonlocal_psp,
             hf_exchange     = E_hf_exchange,
             oep_exchange    = E_oep_exchange,
-            rpa_correlation = E_rpa_correlation
+            rpa_correlation = E_rpa_correlation,
+            ml_xc           = E_ml_xc,
         )
     
     
@@ -377,7 +410,7 @@ class EnergyCalculator:
         self,
         orbitals: np.ndarray,
         derivative_matrix: np.ndarray
-        ) -> tuple[float, float]:
+    ) -> tuple[float, float]:
         """
         Compute kinetic energy: T = T_radial + T_angular
         
@@ -479,7 +512,7 @@ class EnergyCalculator:
         Integrate in spherical coordinates: ∫ f(r) 4π r² dr, the integrand should be one-dimensional
         """
         assert integrand.ndim == 1, \
-            INTEGRAND_NDIM_ERROR_MESSAGE.format(ndim = integrand.ndim)
+            INTEGRAND_NDIM_ERROR_MESSAGE.format(integrand.ndim)
         return np.sum(4 * np.pi * self.quadrature_nodes**2 * integrand * self.quadrature_weights)
     
     
@@ -525,9 +558,10 @@ class EnergyCalculator:
         full_orbitals          : Optional[np.ndarray] = None,
         full_l_terms           : Optional[np.ndarray] = None,
         enable_parallelization : Optional[bool]       = None,
-        ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute exchange-correlation potential for given density data.
+
         Parameters
         ----------
 
@@ -568,7 +602,7 @@ class EnergyCalculator:
             v_x = xc_potential_data.v_x
             v_c = xc_potential_data.v_c
         
-
+        # Compute localized OEP potential
         if self.switches.use_oep:
             v_x_oep, v_c_oep = self.oep_calculator.compute_oep_potentials(
                 full_eigen_energies    = full_eigen_energies,
@@ -577,16 +611,91 @@ class EnergyCalculator:
                 enable_parallelization = enable_parallelization,
             )
         
-        # Mix the XC potential using the hybrid mixing parameter
+        # Mix the XC potential using the hybrid mixing parameter 
         if self.switches.hybrid_mixing_parameter is not None:
-            v_x_local = v_x * (1.0 - self.switches.hybrid_mixing_parameter) + v_x_oep * self.switches.hybrid_mixing_parameter
-            v_c_local = v_c * (1.0 - self.switches.hybrid_mixing_parameter) + v_c_oep * self.switches.hybrid_mixing_parameter
+            v_x_local = v_x * (1.0 - self.switches.hybrid_mixing_parameter) + v_x_oep * self.switches.hybrid_mixing_parameter 
         else:
             v_x_local = v_x + v_x_oep
-            v_c_local = v_c + v_c_oep
+        
+        # v_c_local is not mixed
+        v_c_local = v_c + v_c_oep
 
         return v_x_local, v_c_local
 
+
+    def compute_local_xc_energy_density(
+        self,
+        density_data           : 'DensityData',
+        full_eigen_energies    : Optional[np.ndarray] = None,
+        full_orbitals          : Optional[np.ndarray] = None,
+        full_l_terms           : Optional[np.ndarray] = None,
+        enable_parallelization : Optional[bool]       = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Compute exchange-correlation energy density for given density data.
+        Total energy uses E_xc = ∫ 4π r^2 e_xc(r) dr, which defines the energy densites here.
+        
+        Parameters
+        ----------
+
+        density_data : DensityData
+            Electron density and related quantities (rho, grad_rho, tau)
+            This density data should not include NLCC
+        full_eigen_energies : Optional[np.ndarray]
+            Full eigenvalues of the Kohn-Sham orbitals
+        full_orbitals : Optional[np.ndarray]
+            Full orbitals of the Kohn-Sham orbitals
+        full_l_terms : Optional[np.ndarray]
+            Full l terms of the Kohn-Sham orbitals
+
+        Returns
+        -------
+        e_x_local, e_c_local : np.ndarray, np.ndarray
+            Exchange and correlation energy densities (epsilon_x/epsilon_c),
+            i.e. per-particle energy densities WITHOUT the rho factor.
+        """
+
+        n_grid = len(self.quadrature_nodes)
+
+        e_x = np.zeros(n_grid)
+        e_c = np.zeros(n_grid)
+        e_x_oep = np.zeros(n_grid)
+        e_c_oep = np.zeros(n_grid)
+
+        # Compute XC potential using XC functional
+        if self.switches.use_xc_functional:
+
+            assert isinstance(self.xc_calculator, XCEvaluator), \
+                XC_CALCULATOR_NOT_A_XCEVALUATOR_ERROR_MESSAGE.format(type(self.xc_calculator))
+            
+            density_data_total = self.get_total_density_data_for_xc(density_data)
+
+            # Compute XC potential using total density
+            xc_potential_data = self.xc_calculator.compute_xc(density_data_total)
+            
+            e_x = xc_potential_data.e_x * density_data_total.rho
+            e_c = xc_potential_data.e_c * density_data_total.rho
+        
+        # Compute OEP energy density
+        if self.switches.use_oep:
+            e_x_oep, e_c_oep = \
+                self.oep_calculator.compute_oep_energy_densities(
+                    full_eigen_energies    = full_eigen_energies,
+                    full_orbitals          = full_orbitals,
+                    full_l_terms           = full_l_terms,
+                    enable_parallelization = enable_parallelization,
+                )
+        
+        # Mix the XC potential using the hybrid mixing parameter
+        if self.switches.hybrid_mixing_parameter is not None:
+            e_x_local = e_x * (1.0 - self.switches.hybrid_mixing_parameter) + e_x_oep * self.switches.hybrid_mixing_parameter 
+        else:
+            e_x_local = e_x + e_x_oep
+        
+        # e_c_local is never mixed, so one can just add the OEP energy density directly
+        e_c_local = e_c + e_c_oep
+
+        return e_x_local, e_c_local
 
 
     def _compute_nonlocal_psp_energy(self, orbitals: np.ndarray) -> float:
@@ -613,17 +722,17 @@ class EnergyCalculator:
         
         # Delegate computation to nonlocal calculator
         return self.nonlocal_calculator.compute_nonlocal_energy(
-            orbitals=orbitals,
-            occupations=self.occupation_info.occupations,
-            l_values=self.occupation_info.l_values,
-            unique_l_values=self.occupation_info.unique_l_values
+            orbitals        = orbitals,
+            occupations     = self.occupation_info.occupations,
+            l_values        = self.occupation_info.l_values,
+            unique_l_values = self.occupation_info.unique_l_values
         )
 
 
     def _compute_hf_exchange_energy(
         self,
         orbitals: np.ndarray
-        ) -> float:
+    ) -> float:
         """
         Compute Hartree-Fock exchange energy.
         
@@ -638,7 +747,9 @@ class EnergyCalculator:
         float
             HF exchange energy (0.0 if no HF calculator available)
         """
-        if not self.switches.use_hf_exchange:
+        # RPA@DFT wants the exact-exchange ENERGY on the ground-state orbitals, while
+        # use_hf_exchange stays False so HF never enters the Hamiltonian.
+        if not (self.switches.use_hf_exchange or self.switches.use_post_scf_rpa):
             return 0.0
 
         assert isinstance(self.hf_calculator, HartreeFockExchange), \
@@ -651,7 +762,9 @@ class EnergyCalculator:
 
     def _compute_oep_exchange_energy(self, orbitals: np.ndarray) -> float:
         """
-        Compute OEP exchange energy.
+        Exact exchange (Hartree-Fock / EXX) energy using the OEP calculator.
+        Same quantity as :meth:`_compute_hf_exchange_energy`; OEP only affects how
+        the exchange potential is built in SCF, not this energy definition.
         """
         if not self.switches.use_oep_exchange:
             return 0.0
@@ -662,22 +775,25 @@ class EnergyCalculator:
         return self.oep_calculator.compute_exchange_energy(orbitals)
 
 
-
     def _compute_rpa_correlation_energy(
         self, 
         full_eigen_energies : np.ndarray, 
         full_orbitals       : np.ndarray, 
         full_l_terms        : np.ndarray,
         enable_parallelization: Optional[bool] = False,
-        ) -> float:
+    ) -> float:
         """
         Compute RPA correlation energy.
         """
-        if not self.switches.use_oep_correlation:
+        if not (self.switches.use_oep_correlation or self.switches.use_post_scf_rpa):
             return 0.0
-        
-        assert isinstance(self.oep_calculator, OEPCalculator), \
-            OEP_CALCULATOR_NOT_A_OEPCALCULATOR_ERROR_MESSAGE.format(type(self.oep_calculator))        
+
+        # self-consistent RPA carries RPACorrelation as a mixin on the OEP calculator;
+        # 'RPA@DFT' has a standalone one instead
+        calculator = self.oep_calculator if self.switches.use_oep_correlation \
+                     else self.rpa_calculator
+        assert calculator is not None, \
+            OEP_CALCULATOR_NOT_A_OEPCALCULATOR_ERROR_MESSAGE.format(type(calculator))
 
         assert full_eigen_energies is not None, \
             FULL_EIGEN_ENERGIES_NOT_NONE_ERROR_MESSAGE
@@ -686,9 +802,28 @@ class EnergyCalculator:
         assert full_l_terms is not None, \
             FULL_L_TERMS_NOT_NONE_ERROR_MESSAGE
         
-        return self.oep_calculator.compute_correlation_energy(
+        return calculator.compute_correlation_energy(
             full_eigen_energies    = full_eigen_energies,
             full_orbitals          = full_orbitals,
             full_l_terms           = full_l_terms,
             enable_parallelization = enable_parallelization,
+        )
+
+    def _compute_ml_xc_energy(self, density_data: 'DensityData') -> float:
+        """
+        Compute ML XC energy.
+        """
+        if self.ml_xc_calculator is None:
+            return 0.0
+        
+        if self.ml_xc_calculator.model_kind == "potential":
+            print(MLXC_MODEL_KIND_POTENTIAL_WARNING)
+            return 0.0
+        
+        return self.ml_xc_calculator.compute_energy(
+            density_data       = density_data,
+            quadrature_nodes   = self.quadrature_nodes,
+            quadrature_weights = self.quadrature_weights,
+            density_calculator = self.density_calculator,
+            poisson_solver     = self.poisson_solver,
         )

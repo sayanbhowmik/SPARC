@@ -35,8 +35,7 @@ class PBEParameters(XCParameters):
     Attributes
     ----------
     mu : float
-        PBE gradient enhancement parameter
-        Standard: 0.2195149727645171
+        PBE gradient enhancement parameter 'Standard': 0.2195149727645171
     kappa : float
         PBE parameter κ
         Standard: 0.804
@@ -124,7 +123,7 @@ class GGA_PBE(XCEvaluator):
     def compute_exchange_generic(
         self,
         density_data: DensityData
-        ) -> GenericXCResult:
+    ) -> GenericXCResult:
         """
         Compute PBE exchange in GENERIC form (Stage 1).
         
@@ -162,7 +161,7 @@ class GGA_PBE(XCEvaluator):
         grad_rho = density_data.grad_rho
         
         if grad_rho is None:
-            raise ValueError("GGA_PBE requires grad_rho for exchange calculation")
+            raise ValueError("GGA_PBE requires 'grad_rho' for exchange calculation.")
         
         # PBE parameters
         mu = self.params.mu
@@ -213,21 +212,21 @@ class GGA_PBE(XCEvaluator):
         
         # Derivative w.r.t. sigma (needed for spherical transform)
         # de_x_dsigma = ∂εx/∂σ = V_2_X_term from reference code
-        # V_2_X_term = 0.5*ex_lsd*rho_updn*dfxdg
+        # V_2_X_term = 0.5 * ex_lsd * rho_updn * dfxdg
         de_x_dsigma = 0.5 * ex_lsd * rho_updn * dfxdg
         
         return GenericXCResult(
-            v_generic=v_x_generic,
-            e_generic=ex,
-            de_dsigma=de_x_dsigma,
-            de_dtau=None
+            v_generic = v_x_generic,
+            e_generic = ex,
+            de_dsigma = de_x_dsigma,
+            de_dtau   = None
         )
     
     
     def compute_correlation_generic(
         self,
         density_data: DensityData
-        ) -> GenericXCResult:
+    ) -> GenericXCResult:
         """
         Compute PBE correlation in GENERIC form (Stage 1).
         
@@ -256,13 +255,13 @@ class GGA_PBE(XCEvaluator):
         -----
         PBE correlation is based on the LDA correlation plus gradient corrections.
         """
-        rho = density_data.rho
+        rho      = density_data.rho
         grad_rho = density_data.grad_rho
         
         if grad_rho is None:
-            raise ValueError("GGA_PBE requires grad_rho for correlation calculation")
+            raise ValueError("GGA_PBE requires 'grad_rho' for correlation calculation.")
         
-        # PBE correlation parameter
+        # PBE correlation parameter 
         beta = 0.066725
         
         # Constants

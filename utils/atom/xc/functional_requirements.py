@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 
 # Functional type definitions
-FunctionalType = Literal['LDA', 'GGA', 'meta-GGA', 'hybrid-GGA', 'hybrid-meta-GGA', 'OEP', 'RPA', 'None']
+FunctionalType = Literal['LDA', 'GGA', 'meta-GGA', 'hybrid-GGA', 'hybrid-meta-GGA', 'OEP', 'RPA', 'None', 'Schrodinger']
 
 
 @dataclass
@@ -60,6 +60,11 @@ class FunctionalRequirements:
 # Registry of functional requirements
 _FUNCTIONAL_REQUIREMENTS: Dict[str, FunctionalRequirements] = {
     # LDA functionals
+    'LDA_SVWN': FunctionalRequirements(
+        needs_gradient=False,
+        needs_tau=False,
+        functional_type='LDA'
+    ),
     'LDA_PZ': FunctionalRequirements(
         needs_gradient=False,
         needs_tau=False,
@@ -117,6 +122,18 @@ _FUNCTIONAL_REQUIREMENTS: Dict[str, FunctionalRequirements] = {
         needs_orbitals=True
     ),
     
+    # Non-self-consistent RPA on top of a converged local functional.
+    # needs_gradient is True regardless of the ground-state functional: it is a
+    # superset (GGA_PBE needs it, LDA_PW does not), which keeps the requirement
+    # lookup keyed on xc_functional alone rather than threading the reference
+    # through every call site.
+    'RPA@DFT': FunctionalRequirements(
+        needs_gradient=True,
+        needs_tau=False,
+        functional_type='RPA',
+        needs_orbitals=True
+    ),
+
     # Random Phase Approximation
     'RPA': FunctionalRequirements(
         needs_gradient=True,
@@ -131,7 +148,18 @@ _FUNCTIONAL_REQUIREMENTS: Dict[str, FunctionalRequirements] = {
         needs_tau=False,
         functional_type='None'
     ),
+
+    # Direct Schrodinger mode: no XC, no Hartree
+    'Schrodinger': FunctionalRequirements(
+        needs_gradient=False,
+        needs_tau=False,
+        functional_type='Schrodinger'
+    ),
 }
+
+# Canonical list of valid XC functionals (used by solver, data_manager, etc.)
+# Defined here to avoid importing solver (which pulls in torch) when only using data loading.
+VALID_XC_FUNCTIONAL_LIST = list(_FUNCTIONAL_REQUIREMENTS.keys())
 
 
 def get_functional_requirements(xc_functional: str) -> FunctionalRequirements:

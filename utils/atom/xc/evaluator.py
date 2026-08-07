@@ -213,7 +213,7 @@ class XCEvaluator(ABC):
     
     Examples
     --------
-    >>> # Define parameter class for your functional
+    >>> # Define parameter 'class' for your functional
     >>> @dataclass
     >>> class MyLDAParameters(XCParameters):
     ...     C_x: float = -(3/4) * (3/np.pi)**(1/3)  # Slater constant
@@ -274,7 +274,7 @@ class XCEvaluator(ABC):
         derivative_matrix: Optional[np.ndarray] = None,
         r_quad: Optional[np.ndarray] = None,
         params: Optional[XCParameters] = None
-        ):
+    ):
         """
         Initialize XC evaluator.
         
@@ -366,7 +366,7 @@ class XCEvaluator(ABC):
     def compute_correlation_generic(
         self,
         density_data: DensityData
-        ) -> GenericXCResult:
+    ) -> GenericXCResult:
         """
         Compute correlation in GENERIC form (Stage 1).
         
@@ -408,6 +408,41 @@ class XCEvaluator(ABC):
         """
         pass
     
+
+    def compute_exchange_generic_with_spin(
+        self,
+        density_data_up: DensityData,
+        density_data_dn: DensityData
+    ) -> tuple[GenericXCResult, GenericXCResult]:
+        """
+        Compute exchange in GENERIC form (Stage 1) for spin-polarized systems.
+        """
+        x_result_up = self.compute_exchange_generic(density_data_up)
+        x_result_dn = self.compute_exchange_generic(density_data_dn)
+        return x_result_up, x_result_dn
+        # raise NotImplementedError(
+        #     f"XC functional '{self.params.functional_name}' does not implement "
+        #     "spin-polarized exchange (compute_exchange_generic_with_spin)."
+        # )
+
+
+    
+    def compute_correlation_generic_with_spin(
+        self,
+        density_data_up: DensityData,
+        density_data_dn: DensityData
+    ) -> GenericXCResult:
+        """
+        Compute correlation in GENERIC form (Stage 1) for spin-polarized systems.
+        """
+        c_result_up = self.compute_correlation_generic(density_data_up)
+        c_result_dn = self.compute_correlation_generic(density_data_dn)
+        return c_result_up, c_result_dn
+        # raise NotImplementedError(
+        #     f"XC functional '{self.params.functional_name}' does not implement "
+        #     "spin-polarized correlation (compute_correlation_generic_with_spin)."
+        # )
+
     
     @staticmethod
     def _transform_potential_to_spherical(
@@ -416,7 +451,7 @@ class XCEvaluator(ABC):
         density_data      : DensityData,
         derivative_matrix : Optional[np.ndarray],
         r_quad            : Optional[np.ndarray]
-        ) -> np.ndarray:
+    ) -> np.ndarray:
         """
         Transform a SINGLE XC potential (exchange or correlation) to spherical form.
         
@@ -473,11 +508,11 @@ class XCEvaluator(ABC):
         grad_rho = density_data.grad_rho
         
         if grad_rho is None:
-            raise ValueError("grad_rho required for GGA/meta-GGA transformation")
+            raise ValueError("'grad_rho' required for GGA/meta-GGA transformation.")
         if r_quad is None:
-            raise ValueError("r_quad required for spherical transformation")
+            raise ValueError("'r_quad' required for spherical transformation.")
         if derivative_matrix is None:
-            raise ValueError("derivative_matrix required for GGA/meta-GGA transformation")
+            raise ValueError("'derivative_matrix' required for GGA/meta-GGA transformation.")
         
         # Get problem dimensions
         n_elem = derivative_matrix.shape[0]  # number of elements
@@ -500,7 +535,7 @@ class XCEvaluator(ABC):
         self,
         xc_result: GenericXCResult,
         density_data: DensityData
-        ) -> np.ndarray:
+    ) -> np.ndarray:
         """
         Transform a generic XC potential to spherical coordinates (Stage 2).
         
@@ -602,7 +637,41 @@ class XCEvaluator(ABC):
         
         return XCPotentialData(v_x=v_x, v_c=v_c, e_x=e_x, e_c=e_c, de_x_dtau=de_x_dtau, de_c_dtau=de_c_dtau)
     
-    
+    def compute_xc_with_spin(self, density_data_up: DensityData, density_data_dn: DensityData) -> XCPotentialData:
+        """
+        Compute exchange-correlation potentials and energy densities (TWO STAGES).
+        
+        This is the main interface that orchestrates the two-stage calculation:
+        
+        Stage 1: Generic Form
+        ---------------------
+        Call compute_exchange_generic() and compute_correlation_generic()
+        to get potentials in their original functional form, along with
+        necessary derivatives (∂ε/∂σ, ∂ε/∂τ) for GGA and meta-GGA.
+        """
+        x_result_up, x_result_dn = self.compute_exchange_generic_with_spin(density_data_up, density_data_dn)
+        c_result_up, c_result_dn = self.compute_correlation_generic_with_spin(density_data_up, density_data_dn)
+
+        v_x_up = self.transform_to_spherical(x_result_up, density_data_up)
+        v_c_up = self.transform_to_spherical(c_result_up, density_data_up)
+        v_x_dn = self.transform_to_spherical(x_result_dn, density_data_dn)
+        v_c_dn = self.transform_to_spherical(c_result_dn, density_data_dn)  
+
+        e_x_up = x_result_up.e_generic
+        e_x_dn = x_result_dn.e_generic
+        e_c_up = c_result_up.e_generic
+        e_c_dn = c_result_dn.e_generic
+        de_x_dtau_up = x_result_up.de_dtau
+        de_x_dtau_dn = x_result_dn.de_dtau
+        de_c_dtau_up = c_result_up.de_dtau
+        de_c_dtau_dn = c_result_dn.de_dtau
+
+        xc_potential_data_up = XCPotentialData(v_x=v_x_up, v_c=v_c_up, e_x=e_x_up, e_c=e_c_up, de_x_dtau=de_x_dtau_up, de_c_dtau=de_c_dtau_up)
+        xc_potential_data_dn = XCPotentialData(v_x=v_x_dn, v_c=v_c_dn, e_x=e_x_dn, e_c=e_c_dn, de_x_dtau=de_x_dtau_dn, de_c_dtau=de_c_dtau_dn)
+
+        return xc_potential_data_up, xc_potential_data_dn
+
+
     def __repr__(self) -> str:
         """String representation of the evaluator"""
         return f"{self.__class__.__name__}()"
@@ -612,7 +681,7 @@ def create_xc_evaluator(
     functional_name: str, 
     derivative_matrix: Optional[np.ndarray] = None,
     r_quad: Optional[np.ndarray] = None
-    ) -> XCEvaluator:
+) -> XCEvaluator:
     """
     Factory function to create the appropriate XC evaluator.
     
@@ -651,14 +720,15 @@ def create_xc_evaluator(
     >>> pot_data = evaluator.compute_xc(density_data)
     """
     # Import functional implementations
-    from .lda import LDA_SVWN, LDA_SPW
+    from .lda import LDA_SVWN, LDA_SPW, LDA_PZ
     from .gga_pbe import GGA_PBE
     from .meta_scan import SCAN, rSCAN, r2SCAN
     
     # Simple mapping: functional name → class
     FUNCTIONAL_MAP = {
         # LDA functionals
-        'LDA_PZ': LDA_SVWN,  # Note: LDA_PZ uses VWN correlation in current implementation
+        'LDA_SVWN': LDA_SVWN,
+        'LDA_PZ': LDA_PZ,
         'LDA_PW': LDA_SPW,
         
         # GGA functionals
@@ -701,7 +771,7 @@ try:
     from jax import tree_util
     
     # Note: XCParameters subclasses can be registered individually
-    # Each functional can register its specific parameter class as needed
+    # Each functional can register its specific parameter 'class' as needed
     # Example:
     #   tree_util.register_pytree_node(
     #       LDAParameters,

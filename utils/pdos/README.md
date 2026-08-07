@@ -3,6 +3,8 @@
 ## Overview
 calculate_pdos.py is a Python script that provides a set of tools for processing SPARC output files and calculating **Projected Density of States (PDOS)** for electronic structure analysis. The calculator supports full system PDOS calculation, selective atom analysis, automatic atomic orbital generation, and k-point parallelization for efficient computation of electronic properties from first-principles calculations.
 
+**Spin support**: spin-unpolarized (`SPIN_TYP: 0`) and collinear spin-polarized (`SPIN_TYP: 1`) calculations are supported. Noncollinear spin is not supported yet.
+
 ## Prerequisites
 
 Before using the PDOS calculator, ensure you have the following Python packages installed:
@@ -11,14 +13,12 @@ Before using the PDOS calculator, ensure you have the following Python packages 
 - **Numpy** - Numerical computing library
 - **Scipy** - Scientific computing library (includes linalg, interpolate, sparse, special modules)
 - **PyYAML** - YAML configuration file parsing
-- **Pandas** - Data manipulation and analysis
 
 You can install the required packages using pip:
 
 ```bash
-pip install numpy scipy pandas pyyaml
+pip install numpy scipy pyyaml
 ```
-
 
 ## SPARC Input File Requirements
 
@@ -29,6 +29,13 @@ PRINT_EIGEN: 1      # Required: Print eigenvalues
 PRINT_ORBITAL: 1    # Required: Print wavefunctions for projection
 ```
 
+Optional spin setting (read automatically from the SPARC `.out` file):
+
+```bash
+SPIN_TYP: 0         # spin-unpolarized (default if omitted)
+# or
+SPIN_TYP: 1         # collinear spin-polarized
+```
 
 The PDOS calculator automatically handles both:
 - **Static systems**: Direct PDOS calculation from the provided structure
@@ -168,9 +175,19 @@ Whether to orthogonalize the atomic orbitals. Default: `False`
 
 ## Output
 
-The script will create a `PDOS_output` directory (or custom directory if specified) containing:
-- `DOS.txt` - Total density of states
+The script will create a `PDOS_output` directory (or custom directory if specified).
+
+### Spin-unpolarized (`SPIN_TYP: 0`)
+- `DOS.txt` - Total density of states (`Energy`, `DOS`)
 - `PDOS.txt` - Projected density of states
+
+### Collinear spin-polarized (`SPIN_TYP: 1`)
+- `DOS_up.txt` / `DOS_down.txt` - Spin-resolved total DOS
+- `PDOS_up.txt` / `PDOS_down.txt` - Spin-resolved PDOS
+- `DOS.txt` - Combined file with columns `Energy`, `DOS_up`, `DOS_down`, `DOS_tot`  
+  (`DOS_tot = DOS_up + DOS_down`)
+
+For collinear spin, each channel is projected with spin degeneracy factor `1` (instead of `2` for the unpolarized case).
 
 ## Examples: Single-atom System (Al FCC)
 Consider a simple Al FCC system. The `examples/Al_FCC` folder contains SPARC calculation results with the following files:
@@ -211,18 +228,29 @@ full_pdos_calculation: True
 python calculate_pdos.py --config=config_Al_FCC.yaml
 ```
 
+## Examples: Collinear Spin Pair (Si2)
+
+`examples/Si2_nmag` (`SPIN_TYP: 0`) and `examples/Si2_nmag_spin` (`SPIN_TYP: 1`, zero initial magnetization) are a closed-shell Si2 pair intended for checking that spin-unpolarized DOS/PDOS matches the spin sum (`up + down`) when net magnetization stays ~0.
+
+```bash
+python calculate_pdos.py --config=config_Si2_nmag.yaml
+python calculate_pdos.py --config=config_Si2_nmag_spin.yaml
+```
+
+Configs use the same Gaussian broadening so the two cases can be compared directly. See each example's `README.md` for SPARC run notes.
+
 ## Output Files and Results Discussion
 
 For the provided Al FCC example, the program generates output files that can be analyzed as follows:
 
-### DOS.txt
+### DOS.txt (spin-unpolarized)
 - **Column 1**: Energy levels (in eV)
 - **Column 2**: Total electron density projection, representing the occupied states of the system at different energy levels (states/eV)
 
 This file characterizes the overall electronic structure of the system by showing how many electronic states are available at each energy level.
 
 ```yaml
-# DOS.txt
+# DOS.txt (SPIN_TYP = 0)
 Energy(eV)   DOS
 5.0000000000 0.0000000000
 5.0600600601 0.0000000000
@@ -233,9 +261,22 @@ Energy(eV)   DOS
 ...
 ```
 
+### DOS.txt (collinear spin)
+- **Column 1**: Energy (eV)
+- **Column 2**: `DOS_up`
+- **Column 3**: `DOS_down`
+- **Column 4**: `DOS_tot` (`up + down`)
 
-### PDOS.txt
-The PDOS file contains detailed metadata and projected density of states data. The file structure includes:
+Spin-resolved single-column files `DOS_up.txt` / `DOS_down.txt` use the same two-column layout as the unpolarized `DOS.txt`.
+
+```yaml
+# DOS.txt (SPIN_TYP = 1)
+Energy(eV)   DOS_up        DOS_down      DOS_tot
+...
+```
+
+### PDOS.txt (and `PDOS_up.txt` / `PDOS_down.txt` for spin)
+The PDOS file contains detailed metadata and projected density of states data. For collinear spin, the same layout is written separately to `PDOS_up.txt` and `PDOS_down.txt`. The file structure includes:
 
 **Metadata Section**:
 - **Basic calculation info**: Fermi level, broadening, grid points, energy range
